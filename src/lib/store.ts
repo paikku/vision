@@ -35,12 +35,14 @@ type StoreState = {
   selectedAnnotationId: string | null;
 
   activeToolId: ToolId;
+  centerViewMode: "video" | "frame";
 
   // media + frames
   setMedia: (m: MediaSource | null) => void;
   addFrames: (frames: Frame[]) => void;
   removeFrame: (id: string) => void;
   setActiveFrame: (id: string | null) => void;
+  setCenterViewMode: (mode: "video" | "frame") => void;
 
   // classes
   addClass: (name?: string) => LabelClass;
@@ -74,6 +76,7 @@ export const useStore = create<StoreState>((set, get) => ({
   selectedAnnotationId: null,
 
   activeToolId: "rect",
+  centerViewMode: "video",
 
   setMedia: (media) => {
     const prev = get().media;
@@ -86,6 +89,7 @@ export const useStore = create<StoreState>((set, get) => ({
       activeFrameId: null,
       annotations: [],
       selectedAnnotationId: null,
+      centerViewMode: media?.kind === "video" ? "video" : "frame",
     });
   },
 
@@ -109,7 +113,13 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   setActiveFrame: (id) =>
-    set({ activeFrameId: id, selectedAnnotationId: null }),
+    set({
+      activeFrameId: id,
+      selectedAnnotationId: null,
+      centerViewMode: id ? "frame" : get().centerViewMode,
+    }),
+
+  setCenterViewMode: (mode) => set({ centerViewMode: mode }),
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -175,6 +185,7 @@ export const useStore = create<StoreState>((set, get) => ({
       activeFrameId: null,
       annotations: [],
       selectedAnnotationId: null,
+      centerViewMode: "video",
     });
   },
 

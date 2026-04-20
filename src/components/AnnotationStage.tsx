@@ -2,6 +2,7 @@
 
 import {
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -35,6 +36,7 @@ export function AnnotationStage() {
 
   const [fit, setFit] = useState<FitRect | null>(null);
   const [draftShape, setDraftShape] = useState<Shape | null>(null);
+  const [zoom, setZoom] = useState(1);
 
   // Compute the largest contain-fit rect for the current frame.
   useLayoutEffect(() => {
@@ -63,6 +65,10 @@ export function AnnotationStage() {
     if (containerRef.current) ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, [frame]);
+
+  useEffect(() => {
+    setZoom(1);
+  }, [frame?.id]);
 
   const tool = TOOLS[activeToolId];
   const stageCursor = tool.disabled ? "not-allowed" : tool.cursor;
@@ -113,6 +119,14 @@ export function AnnotationStage() {
     addAnnotation({ frameId: frame.id, classId: activeClassId, shape });
   };
 
+
+  const onWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const next = zoom * (e.deltaY < 0 ? 1.1 : 0.9);
+    setZoom(clampZoom(next));
+  };
+
   // Delete key removes selection.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -138,7 +152,7 @@ export function AnnotationStage() {
   const frameAnnotations = annotations.filter((a) => a.frameId === frame.id);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full bg-checker">
+    <div ref={containerRef} className="relative h-full w-full overflow-auto bg-checker" onWheel={onWheel}>
       {fit && (
         <div
           ref={stageRef}
@@ -149,6 +163,8 @@ export function AnnotationStage() {
             width: fit.width,
             height: fit.height,
             cursor: stageCursor,
+            transform: `scale(${zoom})`,
+            transformOrigin: "center center",
           }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -189,6 +205,31 @@ export function AnnotationStage() {
           </svg>
         </div>
       )}
+
+      <div className="absolute right-3 top-3 flex items-center gap-1 rounded-md bg-black/60 p-1 text-xs text-white backdrop-blur">
+        <button
+          type="button"
+          onClick={() => setZoom((z) => clampZoom(z - 0.1))}
+          className="rounded px-2 py-1 hover:bg-white/10"
+        >
+          -
+        </button>
+        <span className="w-14 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+        <button
+          type="button"
+          onClick={() => setZoom((z) => clampZoom(z + 0.1))}
+          className="rounded px-2 py-1 hover:bg-white/10"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => setZoom(1)}
+          className="rounded px-2 py-1 hover:bg-white/10"
+        >
+          reset
+        </button>
+      </div>
 
       {/* Footer overlay with frame info */}
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-black/55 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
@@ -247,4 +288,8 @@ function ShapeView({
 
 function clamp(v: number) {
   return Math.max(0, Math.min(1, v));
+}
+
+function clampZoom(v: number) {
+  return Math.max(0.25, Math.min(4, v));
 }
