@@ -38,6 +38,7 @@ export function AnnotationStage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [fitState, setFitState] = useState<FitRect | null>(null);
   const [hoveredHandleAnnotationId, setHoveredHandleAnnotationId] = useState<string | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
 
   // Contain-fit layout, recomputed on resize.
   useLayoutEffect(() => {
@@ -139,6 +140,7 @@ export function AnnotationStage() {
       lastClientY: e.clientY,
     };
     e.currentTarget.setPointerCapture(e.pointerId);
+    setIsPanning(true);
   };
 
   const onEditStagePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -181,6 +183,7 @@ export function AnnotationStage() {
     }
     dragRef.current = null;
     setHoveredHandleAnnotationId(null);
+    setIsPanning(false);
   };
 
   return (
@@ -198,7 +201,7 @@ export function AnnotationStage() {
             top: fitState.top,
             width: fitState.width,
             height: fitState.height,
-            cursor: interactionMode === "draw" ? cursor : "default",
+            cursor: interactionMode === "draw" ? cursor : isPanning ? "grabbing" : "grab",
             transformOrigin: "0 0",
             transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
