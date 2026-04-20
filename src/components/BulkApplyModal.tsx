@@ -102,7 +102,7 @@ export function BulkApplyModal({
         onClick={onClose}
       />
       <div
-        className="relative z-10 flex max-h-[90vh] w-[860px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-2xl"
+        className="relative z-10 flex max-h-[95vh] w-[1200px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -165,7 +165,7 @@ export function BulkApplyModal({
           {displayFrames.length === 0 ? (
             <p className="py-8 text-center text-sm text-[var(--color-muted)]">표시할 프레임 없음</p>
           ) : (
-            <div className="grid grid-cols-4 gap-3 xl:grid-cols-5">
+            <div className="grid grid-cols-3 gap-4 lg:grid-cols-4 xl:grid-cols-5">
               {displayFrames.map((f, idx) => {
                 const isSelected = selected.has(f.id);
                 const originalIdx = frames.indexOf(f);

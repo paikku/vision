@@ -147,10 +147,25 @@ export function FrameStrip() {
                   </span>
                 </div>
 
-                {/* Class breakdown badges */}
-                {frameClassCounts && frameClassCounts.size > 0 && (
-                  <div className="flex flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1">
-                    {[...frameClassCounts.entries()].map(([cid, n]) => {
+                {/* Class breakdown badges or except indicator (bottom-left, same row) */}
+                <div className="flex flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1 min-h-[18px]">
+                  {count === 0 ? (
+                    <span
+                      role="button"
+                      aria-label={excepted ? "제외 해제" : "라벨 제외"}
+                      title={excepted ? "미라벨 필터에서 제외 해제" : "미라벨 필터에서 제외"}
+                      onClick={(e) => { e.stopPropagation(); toggleFrameException(f.id); }}
+                      className={[
+                        "flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] cursor-pointer transition",
+                        excepted
+                          ? "bg-[var(--color-accent)]/80 text-white"
+                          : "invisible group-hover:visible bg-[var(--color-surface-2)] text-[var(--color-muted)]",
+                      ].join(" ")}
+                    >
+                      {excepted ? "제외됨" : "제외"}
+                    </span>
+                  ) : (
+                    frameClassCounts && [...frameClassCounts.entries()].map(([cid, n]) => {
                       const klass = classes.find((c) => c.id === cid);
                       if (!klass) return null;
                       return (
@@ -160,33 +175,13 @@ export function FrameStrip() {
                           style={{ background: klass.color }}
                           title={klass.name}
                         >
-                          <span
-                            className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/50"
-                          />
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/50" />
                           {n}
                         </span>
                       );
-                    })}
-                  </div>
-                )}
-
-                {/* Except button (for 0-annotation frames) */}
-                {count === 0 && (
-                  <span
-                    role="button"
-                    aria-label={excepted ? "제외 해제" : "라벨 제외"}
-                    title={excepted ? "미라벨 필터에서 제외 해제" : "미라벨 필터에서 제외"}
-                    onClick={(e) => { e.stopPropagation(); toggleFrameException(f.id); }}
-                    className={[
-                      "absolute left-1 top-1 hidden h-6 px-1.5 cursor-pointer items-center justify-center rounded-full text-[10px] group-hover:flex",
-                      excepted
-                        ? "bg-[var(--color-accent)]/80 text-white"
-                        : "bg-black/60 text-white/70",
-                    ].join(" ")}
-                  >
-                    {excepted ? "제외됨" : "제외"}
-                  </span>
-                )}
+                    })
+                  )}
+                </div>
 
                 {/* Remove button */}
                 <span
