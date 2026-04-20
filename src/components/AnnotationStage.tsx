@@ -278,11 +278,10 @@ export function AnnotationStage() {
                   selected={a.id === selectedAnnotationId}
                   hovered={a.id === hoveredAnnotationId}
                   zoom={zoom}
-                  onSelect={(e) => {
-                    if (interactionMode !== "edit") return;
+                  onSelect={isEditMode ? (e) => {
                     e.stopPropagation();
                     selectAnnotation(a.id);
-                  }}
+                  } : undefined}
                   showHandle={isEditMode && a.id === selectedAnnotationId}
                   onStartMove={isEditMode ? (e) => {
                     if (a.shape.kind !== "rect") return;
@@ -330,13 +329,14 @@ export function AnnotationStage() {
             )}
           </svg>
 
-          {/* Rect label overlays — outside box, top-right corner, no background */}
+          {/* Rect label overlays — outside box, top-right corner, no background.
+              transform: scale(1/zoom) counteracts the parent stageRef scale so the
+              label stays at a fixed pixel size regardless of zoom level. */}
           {showRectLabels && frameAnnotations.map((a) => {
             if (a.shape.kind !== "rect") return null;
             const klass = classes.find((c) => c.id === a.classId);
             if (!klass) return null;
             const s = a.shape;
-            const fs = Math.max(4, 11 / zoom);
             return (
               <div
                 key={a.id}
@@ -344,10 +344,12 @@ export function AnnotationStage() {
                 style={{
                   left: `${(s.x + s.w) * 100}%`,
                   top: `${s.y * 100}%`,
-                  paddingLeft: `${3 / zoom}px`,
-                  fontSize: `${fs}px`,
+                  transform: `scale(${1 / zoom})`,
+                  transformOrigin: "0 0",
+                  fontSize: "11px",
+                  paddingLeft: "3px",
                   color: klass.color,
-                  textShadow: `0 0 ${4 / zoom}px rgba(0,0,0,0.85)`,
+                  textShadow: "0 0 4px rgba(0,0,0,0.85)",
                 }}
               >
                 {klass.name}
