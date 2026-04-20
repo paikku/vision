@@ -73,13 +73,14 @@ export function LabelPanel() {
       if (isEditableTarget(e.target)) return;
       const key = e.key.toLowerCase();
 
-      // Priority 1: hovering a class row + Q/W/E/R → assign shortcut
+      // Priority 1: hovering a class row + Q/W/E/R → assign shortcut + activate class
       if (CLASS_SHORTCUT_KEYS.includes(key as ClassShortcutKey)) {
         const hoveredClass = hoveredClassIdRef.current;
         if (hoveredClass) {
           e.preventDefault();
           e.stopImmediatePropagation();
           setClassShortcut(hoveredClass, key as ClassShortcutKey);
+          setActiveClass(hoveredClass);
           return;
         }
       }
