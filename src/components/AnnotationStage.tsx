@@ -365,6 +365,7 @@ function ShapeView({
   onStartResize,
   showHandle,
   resizing,
+  zoom,
 }: {
   shape: Shape;
   klass: LabelClass;
