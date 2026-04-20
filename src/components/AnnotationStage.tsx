@@ -255,7 +255,6 @@ export function AnnotationStage() {
                     selectAnnotation(a.id);
                   }}
                   showHandle={isEditMode && a.id === selectedAnnotationId}
-                  resizing={a.id === hoveredHandleAnnotationId}
                   onStartMove={(e) => {
                     if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
                     e.stopPropagation();
@@ -373,7 +372,6 @@ function ShapeView({
   onStartMove,
   onStartResize,
   showHandle,
-  resizing,
   zoom,
 }: {
   shape: Shape;
@@ -387,28 +385,16 @@ function ShapeView({
   onStartMove?: (e: ReactPointerEvent<SVGGElement>) => void;
   onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
   showHandle?: boolean;
-  resizing?: boolean;
   zoom: number;
 }) {
   if (shape.kind === "rect") {
     const visualZoom = Math.max(0.25, zoom);
     const fillOpacity = hovered || selected ? "3a" : "22";
     const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
-    const maxHandleWidth = shape.w / 3;
-    const maxHandleHeight = shape.h / 3;
-    const handleSize = Math.max(
-      0.003,
-      Math.min(
-        0.03,
-        Math.min(shape.w, shape.h) * 0.25,
-        maxHandleWidth,
-        maxHandleHeight,
-      ) / Math.sqrt(visualZoom),
-    );
-    const handleStrokeWidth = Math.max(0.8, 1.8 / visualZoom);
-    const handleColor = getContrastingHandleColor(klass.color);
-    const hitWidth = Math.min(shape.w / 3, handleSize * 1.35);
-    const hitHeight = Math.min(shape.h / 3, handleSize * 1.35);
+    // Hit area: 25% of the smaller dimension, capped at 3% of frame
+    const hitSize = Math.min(Math.min(shape.w, shape.h) * 0.25, 0.03);
+    const hitWidth = Math.min(shape.w / 3, hitSize);
+    const hitHeight = Math.min(shape.h / 3, hitSize);
     return (
       <g
         data-annotation-interactive="true"
@@ -444,29 +430,18 @@ function ShapeView({
             style={{ pointerEvents: "none" }}
           />
         )}
+        {/* Resize hit area (no visual, cursor only) */}
         {showHandle && !draft && (
-          <>
-            <path
-              d={`M ${shape.x + shape.w - handleSize} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h - handleSize}`}
-              fill="none"
-              stroke={handleColor}
-              strokeWidth={handleStrokeWidth}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
-              style={{ pointerEvents: "none" }}
-            />
-            <rect
-              x={shape.x + shape.w - hitWidth}
-              y={shape.y + shape.h - hitHeight}
-              width={hitWidth}
-              height={hitHeight}
-              fill="transparent"
-              onPointerDown={onStartResize}
-              data-annotation-interactive="true"
-              style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
-            />
-          </>
+          <rect
+            x={shape.x + shape.w - hitWidth}
+            y={shape.y + shape.h - hitHeight}
+            width={hitWidth}
+            height={hitHeight}
+            fill="transparent"
+            onPointerDown={onStartResize}
+            data-annotation-interactive="true"
+            style={{ cursor: "nwse-resize" }}
+          />
         )}
       </g>
     );
@@ -474,7 +449,8 @@ function ShapeView({
   return null;
 }
 
-function getContrastingHandleColor(hexColor: string) {
+// Retained for possible future use
+function _getContrastingHandleColor(hexColor: string) {
   const hex = hexColor.replace("#", "");
   if (!/^[0-9a-fA-F]{6}$/.test(hex)) return "#ffffff";
   const r = Number.parseInt(hex.slice(0, 2), 16);
