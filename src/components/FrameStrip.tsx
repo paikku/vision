@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useStore } from "@/lib/store";
 
 export function FrameStrip() {
@@ -9,6 +9,8 @@ export function FrameStrip() {
   const setActiveFrame = useStore((s) => s.setActiveFrame);
   const removeFrame = useStore((s) => s.removeFrame);
   const annotations = useStore((s) => s.annotations);
+  const listRef = useRef<HTMLUListElement>(null);
+
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     for (const a of annotations) {
@@ -16,6 +18,15 @@ export function FrameStrip() {
     }
     return map;
   }, [annotations]);
+
+  // Scroll active frame into view when selection changes (keyboard navigation).
+  useEffect(() => {
+    if (!activeFrameId || !listRef.current) return;
+    const item = listRef.current.querySelector<HTMLElement>(
+      `[data-frame-id="${activeFrameId}"]`,
+    );
+    item?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeFrameId]);
 
   if (frames.length === 0) {
     return (
@@ -26,12 +37,12 @@ export function FrameStrip() {
   }
 
   return (
-    <ul className="flex-1 space-y-2 overflow-y-auto p-3">
+    <ul ref={listRef} className="flex-1 space-y-2 overflow-y-auto p-3">
       {frames.map((f, i) => {
         const active = f.id === activeFrameId;
         const count = counts.get(f.id) ?? 0;
         return (
-          <li key={f.id}>
+          <li key={f.id} data-frame-id={f.id}>
             <button
               type="button"
               onClick={() => setActiveFrame(f.id)}

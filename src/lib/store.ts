@@ -54,6 +54,7 @@ type StoreState = {
   removeClass: (id: string) => void;
   renameClass: (id: string, name: string) => void;
   setActiveClass: (id: string | null) => void;
+  setClassColor: (classId: string, color: string) => void;
   setClassShortcut: (classId: string, key: ClassShortcutKey | null) => void;
 
   // annotations
@@ -157,6 +158,11 @@ export const useStore = create<StoreState>((set, get) => ({
   renameClass: (id, name) =>
     set((s) => ({
       classes: s.classes.map((c) => (c.id === id ? { ...c, name } : c)),
+    })),
+
+  setClassColor: (classId, color) =>
+    set((s) => ({
+      classes: s.classes.map((c) => (c.id === classId ? { ...c, color } : c)),
     })),
 
   setActiveClass: (id) => set({ activeClassId: id }),

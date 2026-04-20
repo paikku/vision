@@ -28,6 +28,7 @@ export function AnnotationStage() {
   const addAnnotation = useStore((s) => s.addAnnotation);
   const selectAnnotation = useStore((s) => s.selectAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
+  const setHoveredAnnotation = useStore((s) => s.setHoveredAnnotation);
   const interactionMode = useStore((s) => s.interactionMode);
   const setInteractionMode = useStore((s) => s.setInteractionMode);
   const keepZoomOnFrameChange = useStore((s) => s.keepZoomOnFrameChange);
@@ -243,6 +244,8 @@ export function AnnotationStage() {
                   selected={a.id === selectedAnnotationId}
                   hovered={a.id === hoveredAnnotationId}
                   zoom={zoom}
+                  onPointerEnter={() => setHoveredAnnotation(a.id)}
+                  onPointerLeave={() => setHoveredAnnotation(null)}
                   onSelect={(e) => {
                     if (interactionMode !== "edit") return;
                     e.stopPropagation();
@@ -362,6 +365,8 @@ function ShapeView({
   hovered,
   draft,
   onSelect,
+  onPointerEnter,
+  onPointerLeave,
   onStartMove,
   onStartResize,
   showHandle,
@@ -374,6 +379,8 @@ function ShapeView({
   hovered?: boolean;
   draft?: boolean;
   onSelect?: (e: ReactPointerEvent) => void;
+  onPointerEnter?: () => void;
+  onPointerLeave?: () => void;
   onStartMove?: (e: ReactPointerEvent<SVGGElement>) => void;
   onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
   showHandle?: boolean;
@@ -403,6 +410,8 @@ function ShapeView({
       <g
         data-annotation-interactive="true"
         onPointerDown={onStartMove ?? onSelect}
+        onPointerEnter={onPointerEnter}
+        onPointerLeave={onPointerLeave}
         style={{ cursor: onStartMove ? "move" : undefined }}
       >
         <rect

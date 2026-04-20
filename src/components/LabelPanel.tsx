@@ -21,6 +21,7 @@ export function LabelPanel() {
   const removeClass = useStore((s) => s.removeClass);
   const renameClass = useStore((s) => s.renameClass);
   const setClassShortcut = useStore((s) => s.setClassShortcut);
+  const setClassColor = useStore((s) => s.setClassColor);
 
   const annotations = useStore((s) => s.annotations);
   const activeFrameId = useStore((s) => s.activeFrameId);
@@ -36,13 +37,10 @@ export function LabelPanel() {
   const hoveredClassIdRef = useRef(hoveredClassId);
   hoveredClassIdRef.current = hoveredClassId;
 
-  // Which annotation row is currently hovered (for class-change via Q/W/E/R).
-  const [hoveredAnnotationId, _setHoveredAnnotationLocal] = useState<string | null>(null);
-  const hoveredAnnotationIdRef = useRef(hoveredAnnotationId);
+  // hoveredAnnotationId comes from the store so canvas hover and panel hover are unified.
+  const hoveredAnnotationId = useStore((s) => s.hoveredAnnotationId);
   const setHoveredAnnotationLocal = useCallback((id: string | null) => {
-    hoveredAnnotationIdRef.current = id;
-    _setHoveredAnnotationLocal(id);
-    setHoveredAnnotation(id); // always sync so stage/list hover rules are consistent across modes
+    setHoveredAnnotation(id);
   }, [setHoveredAnnotation]);
 
   const frameAnnotations = annotations.filter(
@@ -57,41 +55,44 @@ export function LabelPanel() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
-      const key = e.key.toLowerCase() as ClassShortcutKey;
-      if (!CLASS_SHORTCUT_KEYS.includes(key)) return;
+      const key = e.key.toLowerCase();
 
-      const hoveredClass = hoveredClassIdRef.current;
-      if (hoveredClass) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        setClassShortcut(hoveredClass, key);
-        return;
+      // Priority 1: hovering a class row + Q/W/E/R → assign shortcut
+      if (CLASS_SHORTCUT_KEYS.includes(key as ClassShortcutKey)) {
+        const hoveredClass = hoveredClassIdRef.current;
+        if (hoveredClass) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setClassShortcut(hoveredClass, key as ClassShortcutKey);
+          return;
+        }
       }
 
-      const hoveredAnnotation = hoveredAnnotationIdRef.current;
+      // Priority 2: hovering an annotation row
+      const hoveredAnnotation = useStore.getState().hoveredAnnotationId;
       if (hoveredAnnotation) {
-        if (REMOVE_KEYS.has(e.key.toLowerCase())) {
+        // Delete/Backspace → remove hovered annotation
+        if (REMOVE_KEYS.has(key)) {
           e.preventDefault();
           e.stopImmediatePropagation();
           removeAnnotation(hoveredAnnotation);
           setHoveredAnnotationLocal(null);
-          if (useStore.getState().selectedAnnotationId === hoveredAnnotation) {
-            selectAnnotation(null);
-          }
           return;
         }
-
-        const klass = useStore.getState().classes.find((c) => c.shortcutKey === key);
-        if (klass) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          updateAnnotation(hoveredAnnotation, { classId: klass.id });
+        // Q/W/E/R → change hovered annotation's class
+        if (CLASS_SHORTCUT_KEYS.includes(key as ClassShortcutKey)) {
+          const klass = useStore.getState().classes.find((c) => c.shortcutKey === key);
+          if (klass) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            updateAnnotation(hoveredAnnotation, { classId: klass.id });
+          }
         }
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [removeAnnotation, selectAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
+  }, [removeAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
 
   return (
     <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
@@ -122,10 +123,19 @@ export function LabelPanel() {
                   onClick={() => setActiveClass(c.id)}
                   className="flex flex-1 items-center gap-2 text-left"
                 >
-                  <span
-                    className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                  <label
+                    title="Click to change color"
+                    className="h-3.5 w-3.5 shrink-0 cursor-pointer rounded-sm ring-offset-1 hover:ring-2 hover:ring-[var(--color-accent)]"
                     style={{ background: c.color }}
-                  />
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="color"
+                      value={c.color}
+                      onChange={(e) => setClassColor(c.id, e.target.value)}
+                      className="sr-only"
+                    />
+                  </label>
                   <input
                     value={c.name}
                     onChange={(e) => renameClass(c.id, e.target.value)}
