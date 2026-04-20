@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import type {
   Annotation,
+  ClassShortcutKey,
   Frame,
   LabelClass,
   MediaSource,
@@ -49,6 +50,7 @@ type StoreState = {
   removeClass: (id: string) => void;
   renameClass: (id: string, name: string) => void;
   setActiveClass: (id: string | null) => void;
+  setClassShortcut: (classId: string, key: ClassShortcutKey | null) => void;
 
   // annotations
   addAnnotation: (a: Omit<Annotation, "id" | "createdAt">) => Annotation;
@@ -147,6 +149,19 @@ export const useStore = create<StoreState>((set, get) => ({
     })),
 
   setActiveClass: (id) => set({ activeClassId: id }),
+
+  setClassShortcut: (classId, key) =>
+    set((s) => ({
+      classes: s.classes.map((c) => ({
+        ...c,
+        shortcutKey:
+          c.id === classId
+            ? (key ?? undefined)
+            : c.shortcutKey === key
+              ? undefined // remove from previous holder
+              : c.shortcutKey,
+      })),
+    })),
 
   addAnnotation: (a) => {
     const ann: Annotation = { id: uid(), createdAt: Date.now(), ...a };

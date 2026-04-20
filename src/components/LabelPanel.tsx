@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import type { ClassShortcutKey } from "@/lib/types";
+
+const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
 
 export function LabelPanel() {
   const classes = useStore((s) => s.classes);
@@ -10,6 +13,7 @@ export function LabelPanel() {
   const addClass = useStore((s) => s.addClass);
   const removeClass = useStore((s) => s.removeClass);
   const renameClass = useStore((s) => s.renameClass);
+  const setClassShortcut = useStore((s) => s.setClassShortcut);
 
   const annotations = useStore((s) => s.annotations);
   const activeFrameId = useStore((s) => s.activeFrameId);
@@ -19,22 +23,54 @@ export function LabelPanel() {
   const updateAnnotation = useStore((s) => s.updateAnnotation);
 
   const [draftName, setDraftName] = useState("");
-  const frameAnnotations = annotations.filter((a) => a.frameId === activeFrameId);
+  // Which class row is currently hovered (for shortcut assignment).
+  const [hoveredClassId, setHoveredClassId] = useState<string | null>(null);
+  const hoveredClassIdRef = useRef(hoveredClassId);
+  hoveredClassIdRef.current = hoveredClassId;
+
+  const frameAnnotations = annotations.filter(
+    (a) => a.frameId === activeFrameId,
+  );
+
+  // Capture-phase listener: when hovering a class row, Q/W/E/R assigns the
+  // shortcut to that class instead of switching the active class. stopImmediatePropagation
+  // prevents the bubble-phase useKeyboardShortcuts handler from also firing.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const hovered = hoveredClassIdRef.current;
+      if (!hovered) return;
+      const key = e.key.toLowerCase() as ClassShortcutKey;
+      if (!CLASS_SHORTCUT_KEYS.includes(key)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setClassShortcut(hovered, key);
+    };
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
+  }, [setClassShortcut]);
 
   return (
     <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
       <Section title="Classes">
+        <p className="mb-2 text-[10px] text-[var(--color-muted)]">
+          Hover a class, press <Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> to assign shortcut.
+        </p>
         <ul className="space-y-1">
           {classes.map((c) => {
             const active = c.id === activeClassId;
+            const isHovered = c.id === hoveredClassId;
             return (
               <li
                 key={c.id}
+                onMouseEnter={() => setHoveredClassId(c.id)}
+                onMouseLeave={() => setHoveredClassId(null)}
                 className={[
                   "group flex items-center gap-2 rounded px-2 py-1.5 transition",
                   active
                     ? "bg-[var(--color-accent-soft)]"
-                    : "hover:bg-[var(--color-surface-2)]",
+                    : isHovered
+                      ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]/40"
+                      : "hover:bg-[var(--color-surface-2)]",
                 ].join(" ")}
               >
                 <button
@@ -43,7 +79,7 @@ export function LabelPanel() {
                   className="flex flex-1 items-center gap-2 text-left"
                 >
                   <span
-                    className="h-3.5 w-3.5 rounded-sm"
+                    className="h-3.5 w-3.5 shrink-0 rounded-sm"
                     style={{ background: c.color }}
                   />
                   <input
@@ -52,6 +88,25 @@ export function LabelPanel() {
                     className="flex-1 bg-transparent outline-none"
                   />
                 </button>
+
+                {/* Shortcut badge — shows assigned key or placeholder on hover */}
+                <div className="shrink-0">
+                  {c.shortcutKey ? (
+                    <button
+                      type="button"
+                      title="Click to clear shortcut"
+                      onClick={() => setClassShortcut(c.id, null)}
+                      className="flex h-5 w-5 items-center justify-center rounded border border-[var(--color-accent)]/60 bg-[var(--color-accent-soft)] font-mono text-[10px] text-[var(--color-accent)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)]"
+                    >
+                      {c.shortcutKey.toUpperCase()}
+                    </button>
+                  ) : isHovered ? (
+                    <span className="flex h-5 w-5 items-center justify-center rounded border border-dashed border-[var(--color-line)] font-mono text-[10px] text-[var(--color-muted)]">
+                      ?
+                    </span>
+                  ) : null}
+                </div>
+
                 <button
                   type="button"
                   onClick={() => removeClass(c.id)}
@@ -113,7 +168,7 @@ export function LabelPanel() {
                     className="flex flex-1 items-center gap-2 text-left"
                   >
                     <span
-                      className="h-2.5 w-2.5 rounded-sm"
+                      className="h-2.5 w-2.5 shrink-0 rounded-sm"
                       style={{ background: klass?.color ?? "#888" }}
                     />
                     <span className="flex-1 truncate">
@@ -150,13 +205,15 @@ export function LabelPanel() {
       <Section title="Shortcuts">
         <ul className="space-y-1 text-xs text-[var(--color-muted)]">
           <li>
-            <Key>R</Key> rectangle tool
+            <Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class
+          </li>
+          <li>
+            <Key>R</Key> rectangle tool (if no class bound)
           </li>
           <li>
             <Key>⌫</Key> delete selected box
           </li>
-          <li>drag on canvas to draw</li>
-          <li>click a box to select</li>
+          <li>scroll wheel → zoom · dblclick → fit</li>
         </ul>
       </Section>
     </div>

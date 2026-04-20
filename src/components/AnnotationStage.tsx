@@ -2,17 +2,15 @@
 
 import {
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
-  useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { useStore } from "@/lib/store";
 import { TOOLS } from "@/lib/tools/registry";
-import type { ShapeDraft } from "@/lib/tools/types";
-import type { Frame, LabelClass, Point, Shape } from "@/lib/types";
+import { useDrawingTool } from "@/hooks/useDrawingTool";
+import { useStageTransform } from "@/hooks/useStageTransform";
+import type { LabelClass, Shape } from "@/lib/types";
 
 type FitRect = { left: number; top: number; width: number; height: number };
 
@@ -27,119 +25,51 @@ export function AnnotationStage() {
   const selectedAnnotationId = useStore((s) => s.selectedAnnotationId);
   const addAnnotation = useStore((s) => s.addAnnotation);
   const selectAnnotation = useStore((s) => s.selectAnnotation);
-  const removeAnnotation = useStore((s) => s.removeAnnotation);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const draftRef = useRef<ShapeDraft | null>(null);
-  const pointerIdRef = useRef<number | null>(null);
+  const [fitState, setFitState] = useState<FitRect | null>(null);
 
-  const [fit, setFit] = useState<FitRect | null>(null);
-  const [draftShape, setDraftShape] = useState<Shape | null>(null);
-  const [zoom, setZoom] = useState(1);
-
-  // Compute the largest contain-fit rect for the current frame.
+  // Contain-fit layout, recomputed on resize.
   useLayoutEffect(() => {
     const recompute = () => {
       const c = containerRef.current;
-      if (!c || !frame) return setFit(null);
+      if (!c || !frame) return setFitState(null);
       const cw = c.clientWidth;
       const ch = c.clientHeight;
       const ar = frame.width / frame.height;
       let w = cw;
       let h = cw / ar;
-      if (h > ch) {
-        h = ch;
-        w = ch * ar;
-      }
-      setFit({
+      if (h > ch) { h = ch; w = ch * ar; }
+      const next: FitRect = {
         left: (cw - w) / 2,
         top: (ch - h) / 2,
         width: w,
         height: h,
-      });
+      };
+      setFitState(next);
+      setFit(next);
     };
     recompute();
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(recompute);
     if (containerRef.current) ro.observe(containerRef.current);
     return () => ro.disconnect();
-  }, [frame]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frame?.id, frame?.width, frame?.height]);
 
-  useEffect(() => {
-    setZoom(1);
-  }, [frame?.id]);
+  const { transform, setFit, zoomFromCenter, reset: resetZoom } =
+    useStageTransform(containerRef, frame?.id);
 
-  const tool = TOOLS[activeToolId];
-  const stageCursor = tool.disabled ? "not-allowed" : tool.cursor;
-
-  const toNorm = useCallback((e: ReactPointerEvent | PointerEvent): Point => {
-    const stage = stageRef.current;
-    if (!stage) return { x: 0, y: 0 };
-    const rect = stage.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    return { x: clamp(x), y: clamp(y) };
-  }, []);
-
-  const onPointerDown = (e: ReactPointerEvent) => {
-    if (!frame || !activeClassId || tool.disabled) return;
-    if (e.button !== 0) return;
-    e.preventDefault();
-    selectAnnotation(null);
-    pointerIdRef.current = e.pointerId;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const start = toNorm(e);
-    draftRef.current = tool.begin(start);
-    setDraftShape(draftRef.current.update(start));
-  };
-
-  const onPointerMove = (e: ReactPointerEvent) => {
-    if (!draftRef.current) return;
-    setDraftShape(draftRef.current.update(toNorm(e)));
-  };
-
-  const finishDraft = (e: ReactPointerEvent) => {
-    if (!draftRef.current || !frame || !activeClassId) return;
-    const end = toNorm(e);
-    const shape = draftRef.current.commit(end);
-    draftRef.current = null;
-    setDraftShape(null);
-    if (pointerIdRef.current !== null) {
-      try {
-        (e.currentTarget as HTMLElement).releasePointerCapture(
-          pointerIdRef.current,
-        );
-      } catch {
-        /* noop */
-      }
-      pointerIdRef.current = null;
-    }
-    if (!shape) return;
-    addAnnotation({ frameId: frame.id, classId: activeClassId, shape });
-  };
-
-
-  const onWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    const next = zoom * (e.deltaY < 0 ? 1.1 : 0.9);
-    setZoom(clampZoom(next));
-  };
-
-  // Delete key removes selection.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && /input|textarea|select/i.test(target.tagName)) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedAnnotationId) {
-        e.preventDefault();
-        removeAnnotation(selectedAnnotationId);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedAnnotationId, removeAnnotation]);
+  const { draftShape, cursor, handlers } = useDrawingTool({
+    stageRef,
+    frame,
+    activeClassId,
+    activeToolId,
+    onBeginDraw: () => selectAnnotation(null),
+    onCommit: (frameId, classId, shape) =>
+      addAnnotation({ frameId, classId, shape }),
+  });
 
   if (!frame) {
     return (
@@ -150,28 +80,37 @@ export function AnnotationStage() {
   }
 
   const frameAnnotations = annotations.filter((a) => a.frameId === frame.id);
+  const { zoom, px, py } = transform;
+  const tool = TOOLS[activeToolId];
 
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-auto bg-checker" onWheel={onWheel}>
-      {fit && (
+    <div
+      ref={containerRef}
+      className="relative h-full w-full overflow-hidden bg-checker"
+      onDoubleClick={resetZoom}
+    >
+      {fitState && (
         <div
           ref={stageRef}
           className="absolute select-none"
           style={{
-            left: fit.left,
-            top: fit.top,
-            width: fit.width,
-            height: fit.height,
-            cursor: stageCursor,
-            transform: `scale(${zoom})`,
-            transformOrigin: "center center",
+            left: fitState.left,
+            top: fitState.top,
+            width: fitState.width,
+            height: fitState.height,
+            cursor,
+            transformOrigin: "0 0",
+            transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={finishDraft}
-          onPointerCancel={finishDraft}
+          {...handlers}
         >
-          <FrameImage frame={frame} />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={frame.url}
+            alt={frame.label}
+            draggable={false}
+            className="absolute inset-0 h-full w-full object-fill"
+          />
           <svg
             className="absolute inset-0 h-full w-full"
             viewBox="0 0 1 1"
@@ -206,49 +145,40 @@ export function AnnotationStage() {
         </div>
       )}
 
+      {/* Zoom controls — double-click stage to reset */}
       <div className="absolute right-3 top-3 flex items-center gap-1 rounded-md bg-black/60 p-1 text-xs text-white backdrop-blur">
         <button
           type="button"
-          onClick={() => setZoom((z) => clampZoom(z - 0.1))}
+          onClick={() => zoomFromCenter(1 / 1.2)}
           className="rounded px-2 py-1 hover:bg-white/10"
         >
-          -
+          −
         </button>
-        <span className="w-14 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+        <span className="w-14 text-center tabular-nums">
+          {Math.round(zoom * 100)}%
+        </span>
         <button
           type="button"
-          onClick={() => setZoom((z) => clampZoom(z + 0.1))}
+          onClick={() => zoomFromCenter(1.2)}
           className="rounded px-2 py-1 hover:bg-white/10"
         >
           +
         </button>
         <button
           type="button"
-          onClick={() => setZoom(1)}
+          onClick={resetZoom}
           className="rounded px-2 py-1 hover:bg-white/10"
         >
-          reset
+          fit
         </button>
       </div>
 
-      {/* Footer overlay with frame info */}
+      {/* Footer status */}
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-black/55 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
-        {frame.width}×{frame.height} · {frameAnnotations.length} labels · tool:{" "}
-        {tool.name.toLowerCase()}
+        {frame.width}×{frame.height} · {frameAnnotations.length} labels ·{" "}
+        {tool.name.toLowerCase()} · scroll to zoom · dblclick to fit
       </div>
     </div>
-  );
-}
-
-function FrameImage({ frame }: { frame: Frame }) {
-  return (
-    /* eslint-disable-next-line @next/next/no-img-element */
-    <img
-      src={frame.url}
-      alt={frame.label}
-      draggable={false}
-      className="absolute inset-0 h-full w-full object-fill"
-    />
   );
 }
 
@@ -284,12 +214,4 @@ function ShapeView({
     );
   }
   return null;
-}
-
-function clamp(v: number) {
-  return Math.max(0, Math.min(1, v));
-}
-
-function clampZoom(v: number) {
-  return Math.max(0.25, Math.min(4, v));
 }

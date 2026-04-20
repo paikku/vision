@@ -25,10 +25,14 @@ export type Frame = {
   label: string;
 };
 
+export type ClassShortcutKey = "q" | "w" | "e" | "r";
+
 export type LabelClass = {
   id: string;
   name: string;
   color: string;
+  /** Q/W/E/R key bound to this class. At most one class holds each key. */
+  shortcutKey?: ClassShortcutKey;
 };
 
 /** Normalized rectangle in image-space (0..1 on both axes). */
