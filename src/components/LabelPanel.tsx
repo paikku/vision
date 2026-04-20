@@ -6,6 +6,12 @@ import type { ClassShortcutKey } from "@/lib/types";
 
 const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
 
+function isEditableTarget(target: EventTarget | null) {
+  if (!target) return false;
+  const el = target as HTMLElement;
+  return /input|textarea|select/i.test(el.tagName) || el.isContentEditable;
+}
+
 export function LabelPanel() {
   const classes = useStore((s) => s.classes);
   const activeClassId = useStore((s) => s.activeClassId);
@@ -48,6 +54,7 @@ export function LabelPanel() {
   // stopImmediatePropagation prevents the bubble-phase useKeyboardShortcuts handler from also firing.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
       const key = e.key.toLowerCase() as ClassShortcutKey;
       if (!CLASS_SHORTCUT_KEYS.includes(key)) return;
 
@@ -248,6 +255,7 @@ export function LabelPanel() {
             <Key>⌫</Key> delete selected box
           </li>
           <li>scroll wheel → zoom · dblclick → fit</li>
+          <li><Key>C</Key> toggle draw/edit mode</li>
         </ul>
       </Section>
     </div>

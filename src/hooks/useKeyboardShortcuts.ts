@@ -28,6 +28,7 @@ function isEditable(target: EventTarget | null) {
  */
 export function useKeyboardShortcuts() {
   const setActiveTool = useStore((s) => s.setActiveTool);
+  const setInteractionMode = useStore((s) => s.setInteractionMode);
 
   // Use refs for frequently-changing values to keep the effect stable.
   const classesRef = useRef(useStore.getState().classes);
@@ -70,6 +71,14 @@ export function useKeyboardShortcuts() {
       }
 
       // 3. Tool shortcuts
+      if (key === "c") {
+        e.preventDefault();
+        const mode = useStore.getState().interactionMode;
+        setInteractionMode(mode === "draw" ? "edit" : "draw");
+        return;
+      }
+
+      // 4. Tool shortcuts
       const tool = TOOL_LIST.find(
         (t) => !t.disabled && t.shortcut?.toLowerCase() === key,
       );
@@ -81,5 +90,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [setActiveTool]);
+  }, [setActiveTool, setInteractionMode]);
 }
