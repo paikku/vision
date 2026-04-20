@@ -21,6 +21,7 @@ export function LabelPanel() {
   const selectAnnotation = useStore((s) => s.selectAnnotation);
   const removeAnnotation = useStore((s) => s.removeAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
+  const setHoveredAnnotation = useStore((s) => s.setHoveredAnnotation);
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -28,26 +29,49 @@ export function LabelPanel() {
   const hoveredClassIdRef = useRef(hoveredClassId);
   hoveredClassIdRef.current = hoveredClassId;
 
+  // Which annotation row is currently hovered (for class-change via Q/W/E/R).
+  const [hoveredAnnotationId, _setHoveredAnnotationLocal] = useState<string | null>(null);
+  const hoveredAnnotationIdRef = useRef(hoveredAnnotationId);
+  const setHoveredAnnotationLocal = (id: string | null) => {
+    hoveredAnnotationIdRef.current = id;
+    _setHoveredAnnotationLocal(id);
+    setHoveredAnnotation(id); // sync to store so AnnotationStage can highlight
+  };
+
   const frameAnnotations = annotations.filter(
     (a) => a.frameId === activeFrameId,
   );
 
-  // Capture-phase listener: when hovering a class row, Q/W/E/R assigns the
-  // shortcut to that class instead of switching the active class. stopImmediatePropagation
-  // prevents the bubble-phase useKeyboardShortcuts handler from also firing.
+  // Capture-phase listener handles two cases:
+  //   1. Hovering a class row → Q/W/E/R assigns shortcut to that class
+  //   2. Hovering an annotation row → Q/W/E/R changes that annotation's class
+  // stopImmediatePropagation prevents the bubble-phase useKeyboardShortcuts handler from also firing.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const hovered = hoveredClassIdRef.current;
-      if (!hovered) return;
       const key = e.key.toLowerCase() as ClassShortcutKey;
       if (!CLASS_SHORTCUT_KEYS.includes(key)) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      setClassShortcut(hovered, key);
+
+      const hoveredClass = hoveredClassIdRef.current;
+      if (hoveredClass) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setClassShortcut(hoveredClass, key);
+        return;
+      }
+
+      const hoveredAnnotation = hoveredAnnotationIdRef.current;
+      if (hoveredAnnotation) {
+        const klass = useStore.getState().classes.find((c) => c.shortcutKey === key);
+        if (klass) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          updateAnnotation(hoveredAnnotation, { classId: klass.id });
+        }
+      }
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [setClassShortcut]);
+  }, [setClassShortcut, updateAnnotation]);
 
   return (
     <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
@@ -152,14 +176,19 @@ export function LabelPanel() {
             {frameAnnotations.map((a, idx) => {
               const klass = classes.find((c) => c.id === a.classId);
               const selected = a.id === selectedAnnotationId;
+              const isHovered = a.id === hoveredAnnotationId;
               return (
                 <li
                   key={a.id}
+                  onMouseEnter={() => setHoveredAnnotationLocal(a.id)}
+                  onMouseLeave={() => setHoveredAnnotationLocal(null)}
                   className={[
-                    "group flex items-center gap-2 rounded px-2 py-1.5 text-xs",
+                    "group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition",
                     selected
                       ? "bg-[var(--color-accent-soft)]"
-                      : "hover:bg-[var(--color-surface-2)]",
+                      : isHovered
+                        ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]/40"
+                        : "hover:bg-[var(--color-surface-2)]",
                   ].join(" ")}
                 >
                   <button
@@ -175,6 +204,11 @@ export function LabelPanel() {
                       #{idx + 1} · {klass?.name ?? "—"}
                     </span>
                   </button>
+                  {isHovered && (
+                    <span className="shrink-0 text-[10px] text-[var(--color-muted)]">
+                      QWER→class
+                    </span>
+                  )}
                   <select
                     value={a.classId}
                     onChange={(e) =>
@@ -208,7 +242,7 @@ export function LabelPanel() {
             <Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class
           </li>
           <li>
-            <Key>R</Key> rectangle tool (if no class bound)
+            hover annotation + <Key>Q</Key>–<Key>R</Key> change its class
           </li>
           <li>
             <Key>⌫</Key> delete selected box

@@ -23,6 +23,7 @@ export function AnnotationStage() {
   const activeClassId = useStore((s) => s.activeClassId);
   const activeToolId = useStore((s) => s.activeToolId);
   const selectedAnnotationId = useStore((s) => s.selectedAnnotationId);
+  const hoveredAnnotationId = useStore((s) => s.hoveredAnnotationId);
   const addAnnotation = useStore((s) => s.addAnnotation);
   const selectAnnotation = useStore((s) => s.selectAnnotation);
 
@@ -125,6 +126,7 @@ export function AnnotationStage() {
                   shape={a.shape}
                   klass={klass}
                   selected={a.id === selectedAnnotationId}
+                  hovered={a.id === hoveredAnnotationId}
                   onSelect={(e) => {
                     e.stopPropagation();
                     selectAnnotation(a.id);
@@ -186,16 +188,20 @@ function ShapeView({
   shape,
   klass,
   selected,
+  hovered,
   draft,
   onSelect,
 }: {
   shape: Shape;
   klass: LabelClass;
   selected?: boolean;
+  hovered?: boolean;
   draft?: boolean;
   onSelect?: (e: ReactPointerEvent) => void;
 }) {
   if (shape.kind === "rect") {
+    const fillOpacity = hovered || selected ? "44" : "22";
+    const strokeWidth = selected ? 2.5 : hovered ? 2.2 : 1.6;
     return (
       <g onPointerDown={onSelect}>
         <rect
@@ -203,13 +209,28 @@ function ShapeView({
           y={shape.y}
           width={shape.w}
           height={shape.h}
-          fill={`${klass.color}22`}
+          fill={`${klass.color}${fillOpacity}`}
           stroke={klass.color}
-          strokeWidth={selected ? 2.5 : 1.6}
+          strokeWidth={strokeWidth}
           strokeDasharray={draft ? "5 4" : undefined}
           vectorEffect="non-scaling-stroke"
           style={{ cursor: onSelect ? "pointer" : undefined }}
         />
+        {/* Outer glow ring when hovered from the panel */}
+        {hovered && !draft && (
+          <rect
+            x={shape.x}
+            y={shape.y}
+            width={shape.w}
+            height={shape.h}
+            fill="none"
+            stroke={klass.color}
+            strokeWidth={5}
+            strokeOpacity={0.25}
+            vectorEffect="non-scaling-stroke"
+            style={{ pointerEvents: "none" }}
+          />
+        )}
       </g>
     );
   }

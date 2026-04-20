@@ -11,7 +11,8 @@ export type StageTransform = {
 type FitRect = { left: number; top: number; width: number; height: number };
 
 const INITIAL: StageTransform = { zoom: 1, px: 0, py: 0 };
-const MIN_ZOOM = 0.25;
+// Minimum zoom is 1 (fit-to-container). Cannot zoom out beyond the base fit level.
+const MIN_ZOOM = 1;
 const MAX_ZOOM = 20;
 const ZOOM_SPEED = 0.002; // per pixel of deltaY
 const PINCH_SPEED = 0.05; // when ctrlKey (pinch gesture)
@@ -53,6 +54,8 @@ export function useStageTransform(
         const fit = fitRef.current;
         if (!fit) return prev;
         const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, prev.zoom * factor));
+        // When clamped to fit level, snap back to center to avoid stale pan offset.
+        if (newZoom === MIN_ZOOM) return INITIAL;
         // cursor in stage CSS-pixel space (before scale)
         const localX = (cursorX - fit.left - prev.px) / prev.zoom;
         const localY = (cursorY - fit.top - prev.py) / prev.zoom;

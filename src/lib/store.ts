@@ -34,6 +34,7 @@ type StoreState = {
 
   annotations: Annotation[];
   selectedAnnotationId: string | null;
+  hoveredAnnotationId: string | null;
 
   activeToolId: ToolId;
   centerViewMode: "video" | "frame";
@@ -57,6 +58,7 @@ type StoreState = {
   updateAnnotation: (id: string, patch: Partial<Annotation>) => void;
   removeAnnotation: (id: string) => void;
   selectAnnotation: (id: string | null) => void;
+  setHoveredAnnotation: (id: string | null) => void;
 
   // tool
   setActiveTool: (id: ToolId) => void;
@@ -76,6 +78,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
   annotations: [],
   selectedAnnotationId: null,
+  hoveredAnnotationId: null,
 
   activeToolId: "rect",
   centerViewMode: "video",
@@ -118,6 +121,7 @@ export const useStore = create<StoreState>((set, get) => ({
     set({
       activeFrameId: id,
       selectedAnnotationId: null,
+      hoveredAnnotationId: null,
       centerViewMode: id ? "frame" : get().centerViewMode,
     }),
 
@@ -187,6 +191,7 @@ export const useStore = create<StoreState>((set, get) => ({
     })),
 
   selectAnnotation: (id) => set({ selectedAnnotationId: id }),
+  setHoveredAnnotation: (id) => set({ hoveredAnnotationId: id }),
 
   setActiveTool: (id) => set({ activeToolId: id }),
 
