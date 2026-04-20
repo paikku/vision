@@ -94,9 +94,12 @@ export function AnnotationStage() {
         annotationId: string;
         startClientX: number;
         startClientY: number;
+        hasMoved: boolean;
         startShape: { x: number; y: number; w: number; h: number };
       }
   >(null);
+
+  const DRAG_ACTIVATE_DISTANCE_PX = 2;
 
   const clampRect = useCallback((x: number, y: number, w: number, h: number) => {
     const minSize = 0.005;
@@ -121,10 +124,12 @@ export function AnnotationStage() {
   const frameAnnotations = annotations.filter((a) => a.frameId === frame.id);
   const { zoom, px, py } = transform;
   const tool = TOOLS[activeToolId];
+  const isEditMode = interactionMode === "edit";
 
   const onEditStagePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (interactionMode !== "edit" || e.button !== 0) return;
-    if (e.target !== e.currentTarget) return;
+    const target = e.target as HTMLElement | SVGElement;
+    if (target.closest('[data-annotation-interactive="true"]')) return;
     e.preventDefault();
     selectAnnotation(null);
     dragRef.current = {
@@ -149,8 +154,14 @@ export function AnnotationStage() {
 
     const active = frameAnnotations.find((a) => a.id === drag.annotationId);
     if (!active || active.shape.kind !== "rect" || !fitState) return;
-    const dx = (e.clientX - drag.startClientX) / (fitState.width * zoom);
-    const dy = (e.clientY - drag.startClientY) / (fitState.height * zoom);
+    const rawDx = e.clientX - drag.startClientX;
+    const rawDy = e.clientY - drag.startClientY;
+    if (!drag.hasMoved) {
+      if (Math.hypot(rawDx, rawDy) < DRAG_ACTIVATE_DISTANCE_PX) return;
+      drag.hasMoved = true;
+    }
+    const dx = rawDx / (fitState.width * zoom);
+    const dy = rawDy / (fitState.height * zoom);
     const start = drag.startShape;
     const next =
       drag.mode === "move"
@@ -186,7 +197,7 @@ export function AnnotationStage() {
             top: fitState.top,
             width: fitState.width,
             height: fitState.height,
-            cursor: interactionMode === "draw" ? cursor : "grab",
+            cursor: interactionMode === "draw" ? cursor : "default",
             transformOrigin: "0 0",
             transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
@@ -231,12 +242,13 @@ export function AnnotationStage() {
                   klass={klass}
                   selected={a.id === selectedAnnotationId}
                   hovered={a.id === hoveredAnnotationId}
+                  zoom={zoom}
                   onSelect={(e) => {
                     if (interactionMode !== "edit") return;
                     e.stopPropagation();
                     selectAnnotation(a.id);
                   }}
-                  showHandle={interactionMode === "edit" && (a.id === selectedAnnotationId || a.id === hoveredAnnotationId)}
+                  showHandle={isEditMode && a.id === selectedAnnotationId}
                   resizing={a.id === hoveredHandleAnnotationId}
                   onStartMove={(e) => {
                     if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
@@ -248,9 +260,10 @@ export function AnnotationStage() {
                       annotationId: a.id,
                       startClientX: e.clientX,
                       startClientY: e.clientY,
+                      hasMoved: false,
                       startShape: a.shape,
                     };
-                    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+                    stageRef.current?.setPointerCapture(e.pointerId);
                   }}
                   onStartResize={(e) => {
                     if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
@@ -263,9 +276,10 @@ export function AnnotationStage() {
                       annotationId: a.id,
                       startClientX: e.clientX,
                       startClientY: e.clientY,
+                      hasMoved: false,
                       startShape: a.shape,
                     };
-                    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+                    stageRef.current?.setPointerCapture(e.pointerId);
                   }}
                 />
               );
@@ -276,6 +290,7 @@ export function AnnotationStage() {
                 klass={
                   classes.find((c) => c.id === activeClassId) ?? classes[0]
                 }
+                zoom={zoom}
                 draft
               />
             )}
@@ -351,6 +366,7 @@ function ShapeView({
   onStartResize,
   showHandle,
   resizing,
+  zoom,
 }: {
   shape: Shape;
   klass: LabelClass;
@@ -362,13 +378,33 @@ function ShapeView({
   onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
   showHandle?: boolean;
   resizing?: boolean;
+  zoom: number;
 }) {
   if (shape.kind === "rect") {
-    const fillOpacity = hovered || selected ? "44" : "22";
-    const strokeWidth = selected ? 2.5 : hovered ? 2.2 : 1.6;
-    const handleSize = 0.02;
+    const visualZoom = Math.max(0.25, zoom);
+    const fillOpacity = hovered || selected ? "3a" : "22";
+    const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
+    const maxHandleWidth = shape.w / 3;
+    const maxHandleHeight = shape.h / 3;
+    const handleSize = Math.max(
+      0.003,
+      Math.min(
+        0.03,
+        Math.min(shape.w, shape.h) * 0.25,
+        maxHandleWidth,
+        maxHandleHeight,
+      ) / Math.sqrt(visualZoom),
+    );
+    const handleStrokeWidth = Math.max(0.8, 1.8 / visualZoom);
+    const handleColor = getContrastingHandleColor(klass.color);
+    const hitWidth = Math.min(shape.w / 3, handleSize * 1.35);
+    const hitHeight = Math.min(shape.h / 3, handleSize * 1.35);
     return (
-      <g onPointerDown={onStartMove ?? onSelect} style={{ cursor: onStartMove ? "move" : undefined }}>
+      <g
+        data-annotation-interactive="true"
+        onPointerDown={onStartMove ?? onSelect}
+        style={{ cursor: onStartMove ? "move" : undefined }}
+      >
         <rect
           x={shape.x}
           y={shape.y}
@@ -382,7 +418,7 @@ function ShapeView({
           style={{ cursor: onStartMove ? "move" : onSelect ? "pointer" : undefined }}
         />
         {/* Outer glow ring when hovered from the panel */}
-        {hovered && !draft && (
+        {hovered && !selected && !draft && (
           <rect
             x={shape.x}
             y={shape.y}
@@ -390,28 +426,48 @@ function ShapeView({
             height={shape.h}
             fill="none"
             stroke={klass.color}
-            strokeWidth={5}
+            strokeWidth={4 / visualZoom}
             strokeOpacity={0.25}
             vectorEffect="non-scaling-stroke"
             style={{ pointerEvents: "none" }}
           />
         )}
         {showHandle && !draft && (
-          <rect
-            x={shape.x + shape.w - handleSize}
-            y={shape.y + shape.h - handleSize}
-            width={handleSize}
-            height={handleSize}
-            fill={klass.color}
-            stroke="white"
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-            onPointerDown={onStartResize}
-            style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
-          />
+          <>
+            <path
+              d={`M ${shape.x + shape.w - handleSize} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h - handleSize}`}
+              fill="none"
+              stroke={handleColor}
+              strokeWidth={handleStrokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+              style={{ pointerEvents: "none" }}
+            />
+            <rect
+              x={shape.x + shape.w - hitWidth}
+              y={shape.y + shape.h - hitHeight}
+              width={hitWidth}
+              height={hitHeight}
+              fill="transparent"
+              onPointerDown={onStartResize}
+              data-annotation-interactive="true"
+              style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
+            />
+          </>
         )}
       </g>
     );
   }
   return null;
+}
+
+function getContrastingHandleColor(hexColor: string) {
+  const hex = hexColor.replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return "#ffffff";
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luminance > 150 ? "#111111" : "#ffffff";
 }
