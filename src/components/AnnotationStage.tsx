@@ -103,16 +103,20 @@ export function AnnotationStage() {
 
   const DRAG_ACTIVATE_DISTANCE_PX = 2;
 
-  const clampRect = useCallback((x: number, y: number, w: number, h: number) => {
-    const minSize = 0.005;
-    const nextW = Math.max(minSize, Math.min(1, w));
-    const nextH = Math.max(minSize, Math.min(1, h));
-    return {
-      x: Math.max(0, Math.min(1 - nextW, x)),
-      y: Math.max(0, Math.min(1 - nextH, y)),
-      w: nextW,
-      h: nextH,
-    };
+  // Move: only clamp position, never touch size.
+  const clampMove = useCallback((x: number, y: number, w: number, h: number) => ({
+    x: Math.max(0, Math.min(1 - w, x)),
+    y: Math.max(0, Math.min(1 - h, y)),
+    w,
+    h,
+  }), []);
+
+  // Resize: enforce minimum size, keep top-left fixed.
+  const clampResize = useCallback((x: number, y: number, w: number, h: number) => {
+    const minSize = 0.0005;
+    const nextW = Math.max(minSize, Math.min(1 - x, w));
+    const nextH = Math.max(minSize, Math.min(1 - y, h));
+    return { x, y, w: nextW, h: nextH };
   }, []);
 
   if (!frame) {
@@ -168,8 +172,8 @@ export function AnnotationStage() {
     const start = drag.startShape;
     const next =
       drag.mode === "move"
-        ? clampRect(start.x + dx, start.y + dy, start.w, start.h)
-        : clampRect(start.x, start.y, start.w + dx, start.h + dy);
+        ? clampMove(start.x + dx, start.y + dy, start.w, start.h)
+        : clampResize(start.x, start.y, start.w + dx, start.h + dy);
     updateAnnotation(active.id, { shape: { kind: "rect", ...next } });
   };
 
