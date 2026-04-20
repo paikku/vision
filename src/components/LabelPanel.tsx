@@ -37,13 +37,10 @@ export function LabelPanel() {
   const hoveredClassIdRef = useRef(hoveredClassId);
   hoveredClassIdRef.current = hoveredClassId;
 
-  // Which annotation row is currently hovered (for class-change via Q/W/E/R).
-  const [hoveredAnnotationId, _setHoveredAnnotationLocal] = useState<string | null>(null);
-  const hoveredAnnotationIdRef = useRef(hoveredAnnotationId);
+  // hoveredAnnotationId comes from the store so canvas hover and panel hover are unified.
+  const hoveredAnnotationId = useStore((s) => s.hoveredAnnotationId);
   const setHoveredAnnotationLocal = useCallback((id: string | null) => {
-    hoveredAnnotationIdRef.current = id;
-    _setHoveredAnnotationLocal(id);
-    setHoveredAnnotation(id); // always sync so stage/list hover rules are consistent across modes
+    setHoveredAnnotation(id);
   }, [setHoveredAnnotation]);
 
   const frameAnnotations = annotations.filter(
