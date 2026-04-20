@@ -17,6 +17,7 @@ type DrawingToolOptions = {
   frame: Frame | null;
   activeClassId: string | null;
   activeToolId: ToolId;
+  interactionMode: "draw" | "edit";
   onBeginDraw: () => void;
   onCommit: (frameId: string, classId: string, shape: Shape) => void;
 };
@@ -33,6 +34,7 @@ export function useDrawingTool({
   frame,
   activeClassId,
   activeToolId,
+  interactionMode,
   onBeginDraw,
   onCommit,
 }: DrawingToolOptions) {
@@ -71,8 +73,8 @@ export function useDrawingTool({
     return () => window.removeEventListener("keydown", handler, { capture: true });
   }, [cancelDraft]);
 
-  // Cancel pending draft when tool or frame changes.
-  useEffect(() => { cancelDraft(); }, [activeToolId, frame?.id, cancelDraft]);
+  // Cancel pending draft when tool, frame, or interaction mode changes.
+  useEffect(() => { cancelDraft(); }, [activeToolId, frame?.id, interactionMode, cancelDraft]);
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {

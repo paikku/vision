@@ -79,6 +79,7 @@ export function AnnotationStage() {
     frame,
     activeClassId,
     activeToolId,
+    interactionMode,
     onBeginDraw: () => selectAnnotation(null),
     onCommit: (frameId, classId, shape) =>
       addAnnotation({ frameId, classId, shape }),
