@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import type { ClassShortcutKey } from "@/lib/types";
 
 const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
+const REMOVE_KEYS = new Set(["delete", "backspace"]);
 
 function isEditableTarget(target: EventTarget | null) {
   if (!target) return false;
@@ -28,7 +29,6 @@ export function LabelPanel() {
   const removeAnnotation = useStore((s) => s.removeAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
   const setHoveredAnnotation = useStore((s) => s.setHoveredAnnotation);
-  const interactionMode = useStore((s) => s.interactionMode);
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -39,26 +39,20 @@ export function LabelPanel() {
   // Which annotation row is currently hovered (for class-change via Q/W/E/R).
   const [hoveredAnnotationId, _setHoveredAnnotationLocal] = useState<string | null>(null);
   const hoveredAnnotationIdRef = useRef(hoveredAnnotationId);
-  const setHoveredAnnotationLocal = (id: string | null) => {
+  const setHoveredAnnotationLocal = useCallback((id: string | null) => {
     hoveredAnnotationIdRef.current = id;
     _setHoveredAnnotationLocal(id);
-    setHoveredAnnotation(interactionMode === "edit" ? id : null); // sync to store only in edit mode
-  };
-
-  useEffect(() => {
-    if (interactionMode !== "edit" && hoveredAnnotationIdRef.current) {
-      setHoveredAnnotationLocal(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interactionMode]);
+    setHoveredAnnotation(id); // always sync so stage/list hover rules are consistent across modes
+  }, [setHoveredAnnotation]);
 
   const frameAnnotations = annotations.filter(
     (a) => a.frameId === activeFrameId,
   );
 
-  // Capture-phase listener handles two cases:
-  //   1. Hovering a class row → Q/W/E/R assigns shortcut to that class
-  //   2. Hovering an annotation row → Q/W/E/R changes that annotation's class
+  // Capture-phase listener priority rules:
+  //   1. Hovering a class row + Q/W/E/R → assign shortcut to that class
+  //   2. Hovering an annotation row + Delete/Backspace → remove hovered annotation
+  //   3. Hovering an annotation row + Q/W/E/R → change hovered annotation class
   // stopImmediatePropagation prevents the bubble-phase useKeyboardShortcuts handler from also firing.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -76,6 +70,17 @@ export function LabelPanel() {
 
       const hoveredAnnotation = hoveredAnnotationIdRef.current;
       if (hoveredAnnotation) {
+        if (REMOVE_KEYS.has(e.key.toLowerCase())) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          removeAnnotation(hoveredAnnotation);
+          setHoveredAnnotationLocal(null);
+          if (useStore.getState().selectedAnnotationId === hoveredAnnotation) {
+            selectAnnotation(null);
+          }
+          return;
+        }
+
         const klass = useStore.getState().classes.find((c) => c.shortcutKey === key);
         if (klass) {
           e.preventDefault();
@@ -86,7 +91,7 @@ export function LabelPanel() {
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [setClassShortcut, updateAnnotation]);
+  }, [removeAnnotation, selectAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
 
   return (
     <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
@@ -195,10 +200,7 @@ export function LabelPanel() {
               return (
                 <li
                   key={a.id}
-                  onMouseEnter={() => {
-                    if (interactionMode !== "edit") return;
-                    setHoveredAnnotationLocal(a.id);
-                  }}
+                  onMouseEnter={() => setHoveredAnnotationLocal(a.id)}
                   onMouseLeave={() => setHoveredAnnotationLocal(null)}
                   className={[
                     "group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition",

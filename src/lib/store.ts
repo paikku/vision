@@ -201,11 +201,7 @@ export const useStore = create<StoreState>((set, get) => ({
   setHoveredAnnotation: (id) => set({ hoveredAnnotationId: id }),
 
   setActiveTool: (id) => set({ activeToolId: id }),
-  setInteractionMode: (interactionMode) =>
-    set({
-      interactionMode,
-      hoveredAnnotationId: interactionMode === "edit" ? get().hoveredAnnotationId : null,
-    }),
+  setInteractionMode: (interactionMode) => set({ interactionMode }),
 
   reset: () => {
     const s = get();

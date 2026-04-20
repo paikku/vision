@@ -240,7 +240,7 @@ export function AnnotationStage() {
                   shape={a.shape}
                   klass={klass}
                   selected={a.id === selectedAnnotationId}
-                  hovered={isEditMode && a.id === hoveredAnnotationId}
+                  hovered={a.id === hoveredAnnotationId}
                   zoom={zoom}
                   onSelect={(e) => {
                     if (interactionMode !== "edit") return;
