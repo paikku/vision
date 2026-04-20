@@ -28,6 +28,7 @@ export function LabelPanel() {
   const removeAnnotation = useStore((s) => s.removeAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
   const setHoveredAnnotation = useStore((s) => s.setHoveredAnnotation);
+  const interactionMode = useStore((s) => s.interactionMode);
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -41,8 +42,15 @@ export function LabelPanel() {
   const setHoveredAnnotationLocal = (id: string | null) => {
     hoveredAnnotationIdRef.current = id;
     _setHoveredAnnotationLocal(id);
-    setHoveredAnnotation(id); // sync to store so AnnotationStage can highlight
+    setHoveredAnnotation(interactionMode === "edit" ? id : null); // sync to store only in edit mode
   };
+
+  useEffect(() => {
+    if (interactionMode !== "edit" && hoveredAnnotationIdRef.current) {
+      setHoveredAnnotationLocal(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interactionMode]);
 
   const frameAnnotations = annotations.filter(
     (a) => a.frameId === activeFrameId,
@@ -187,7 +195,10 @@ export function LabelPanel() {
               return (
                 <li
                   key={a.id}
-                  onMouseEnter={() => setHoveredAnnotationLocal(a.id)}
+                  onMouseEnter={() => {
+                    if (interactionMode !== "edit") return;
+                    setHoveredAnnotationLocal(a.id);
+                  }}
                   onMouseLeave={() => setHoveredAnnotationLocal(null)}
                   className={[
                     "group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition",

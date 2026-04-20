@@ -94,9 +94,12 @@ export function AnnotationStage() {
         annotationId: string;
         startClientX: number;
         startClientY: number;
+        hasMoved: boolean;
         startShape: { x: number; y: number; w: number; h: number };
       }
   >(null);
+
+  const DRAG_ACTIVATE_DISTANCE_PX = 2;
 
   const clampRect = useCallback((x: number, y: number, w: number, h: number) => {
     const minSize = 0.005;
@@ -150,8 +153,14 @@ export function AnnotationStage() {
 
     const active = frameAnnotations.find((a) => a.id === drag.annotationId);
     if (!active || active.shape.kind !== "rect" || !fitState) return;
-    const dx = (e.clientX - drag.startClientX) / (fitState.width * zoom);
-    const dy = (e.clientY - drag.startClientY) / (fitState.height * zoom);
+    const rawDx = e.clientX - drag.startClientX;
+    const rawDy = e.clientY - drag.startClientY;
+    if (!drag.hasMoved) {
+      if (Math.hypot(rawDx, rawDy) < DRAG_ACTIVATE_DISTANCE_PX) return;
+      drag.hasMoved = true;
+    }
+    const dx = rawDx / (fitState.width * zoom);
+    const dy = rawDy / (fitState.height * zoom);
     const start = drag.startShape;
     const next =
       drag.mode === "move"
@@ -250,6 +259,7 @@ export function AnnotationStage() {
                       annotationId: a.id,
                       startClientX: e.clientX,
                       startClientY: e.clientY,
+                      hasMoved: false,
                       startShape: a.shape,
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
@@ -265,6 +275,7 @@ export function AnnotationStage() {
                       annotationId: a.id,
                       startClientX: e.clientX,
                       startClientY: e.clientY,
+                      hasMoved: false,
                       startShape: a.shape,
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
