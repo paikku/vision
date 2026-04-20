@@ -40,6 +40,7 @@ type StoreState = {
   centerViewMode: "video" | "frame";
   keepZoomOnFrameChange: boolean;
   interactionMode: "draw" | "edit";
+  exceptedFrameIds: Record<string, boolean>;
 
   // media + frames
   setMedia: (m: MediaSource | null) => void;
@@ -48,6 +49,7 @@ type StoreState = {
   setActiveFrame: (id: string | null) => void;
   setCenterViewMode: (mode: "video" | "frame") => void;
   setKeepZoomOnFrameChange: (keep: boolean) => void;
+  toggleFrameException: (id: string) => void;
 
   // classes
   addClass: (name?: string) => LabelClass;
@@ -89,6 +91,7 @@ export const useStore = create<StoreState>((set, get) => ({
   centerViewMode: "video",
   keepZoomOnFrameChange: false,
   interactionMode: "draw",
+  exceptedFrameIds: {},
 
   setMedia: (media) => {
     const prev = get().media;
@@ -134,6 +137,12 @@ export const useStore = create<StoreState>((set, get) => ({
 
   setCenterViewMode: (mode) => set({ centerViewMode: mode }),
   setKeepZoomOnFrameChange: (keepZoomOnFrameChange) => set({ keepZoomOnFrameChange }),
+  toggleFrameException: (id) =>
+    set((s) => ({
+      exceptedFrameIds: s.exceptedFrameIds[id]
+        ? Object.fromEntries(Object.entries(s.exceptedFrameIds).filter(([k]) => k !== id))
+        : { ...s.exceptedFrameIds, [id]: true },
+    })),
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -222,6 +231,7 @@ export const useStore = create<StoreState>((set, get) => ({
       centerViewMode: "video",
       keepZoomOnFrameChange: false,
       interactionMode: "draw",
+      exceptedFrameIds: {},
     });
   },
 

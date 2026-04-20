@@ -48,8 +48,8 @@ export function useKeyboardShortcuts() {
       if (isEditable(e.target)) return;
       const key = e.key.toLowerCase();
 
-      // 1. Delete selected annotation
-      if (key === "delete" || key === "backspace") {
+      // 1. Delete selected annotation (D key)
+      if (key === "d") {
         const selected = selectedAnnotationIdRef.current;
         if (selected) {
           e.preventDefault();
@@ -70,13 +70,13 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // 3. Frame navigation (ArrowUp / ArrowDown)
-      if (key === "arrowup" || key === "arrowdown") {
+      // 3. Frame navigation (1 = previous, 2 = next)
+      if (key === "1" || key === "2") {
         const { frames, activeFrameId } = useStore.getState();
         if (frames.length === 0) return;
         const idx = frames.findIndex((f) => f.id === activeFrameId);
         const next =
-          key === "arrowup"
+          key === "1"
             ? Math.max(0, idx - 1)
             : Math.min(frames.length - 1, idx + 1);
         if (idx !== next) {

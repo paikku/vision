@@ -4,6 +4,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -16,17 +17,16 @@ type DrawingToolOptions = {
   frame: Frame | null;
   activeClassId: string | null;
   activeToolId: ToolId;
-  /** Called when drawing starts (to clear annotation selection). */
   onBeginDraw: () => void;
-  /** Called when a shape is successfully committed. */
   onCommit: (frameId: string, classId: string, shape: Shape) => void;
 };
 
 /**
- * Handles all pointer-capture logic for annotation drawing.
- * Works with any AnnotationTool from the registry.
- * getBoundingClientRect() on the stage div accounts for CSS transforms,
- * so toNorm is correct even when the stage is zoomed/panned.
+ * Click-to-click annotation drawing.
+ *
+ * - Click 1: anchor first corner, preview follows mouse.
+ * - Click 2: commit the shape.
+ * - Right-click or Escape while pending: cancel.
  */
 export function useDrawingTool({
   stageRef,
@@ -37,10 +37,10 @@ export function useDrawingTool({
   onCommit,
 }: DrawingToolOptions) {
   const draftRef = useRef<ShapeDraft | null>(null);
-  const pointerIdRef = useRef<number | null>(null);
+  // "pending" = first click placed, waiting for second click
+  const phaseRef = useRef<"idle" | "pending">("idle");
   const [draftShape, setDraftShape] = useState<Shape | null>(null);
 
-  // Keep mutable options in ref to avoid stale closures in event handlers.
   const optsRef = useRef({ frame, activeClassId, onBeginDraw, onCommit });
   optsRef.current = { frame, activeClassId, onBeginDraw, onCommit };
 
@@ -54,21 +54,59 @@ export function useDrawingTool({
     };
   }, [stageRef]);
 
+  const cancelDraft = useCallback(() => {
+    draftRef.current = null;
+    setDraftShape(null);
+    phaseRef.current = "idle";
+  }, []);
+
   const tool = TOOLS[activeToolId];
+
+  // Cancel on Escape key while a draft is pending.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && phaseRef.current === "pending") cancelDraft();
+    };
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
+  }, [cancelDraft]);
+
+  // Cancel pending draft when tool or frame changes.
+  useEffect(() => { cancelDraft(); }, [activeToolId, frame?.id, cancelDraft]);
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      const { frame: f, activeClassId: cid, onBeginDraw: begin } = optsRef.current;
-      if (!f || !cid || tool.disabled || e.button !== 0) return;
+      const { frame: f, activeClassId: cid, onBeginDraw: begin, onCommit: commit } =
+        optsRef.current;
+      if (!f || !cid || tool.disabled) return;
+
+      // Right-click cancels a pending draft.
+      if (e.button === 2) {
+        cancelDraft();
+        return;
+      }
+      if (e.button !== 0) return;
       e.preventDefault();
-      begin();
-      pointerIdRef.current = e.pointerId;
-      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-      const start = toNorm(e);
-      draftRef.current = tool.begin(start);
-      setDraftShape(draftRef.current.update(start));
+
+      if (phaseRef.current === "idle") {
+        // First click: anchor
+        begin();
+        const start = toNorm(e);
+        draftRef.current = tool.begin(start);
+        setDraftShape(draftRef.current.update(start));
+        phaseRef.current = "pending";
+      } else {
+        // Second click: commit
+        if (!draftRef.current) { phaseRef.current = "idle"; return; }
+        const end = toNorm(e);
+        const shape = draftRef.current.commit(end);
+        draftRef.current = null;
+        setDraftShape(null);
+        phaseRef.current = "idle";
+        if (shape) commit(f.id, cid, shape);
+      }
     },
-    [tool, toNorm],
+    [tool, toNorm, cancelDraft],
   );
 
   const onPointerMove = useCallback(
@@ -79,27 +117,8 @@ export function useDrawingTool({
     [toNorm],
   );
 
-  const finishDraft = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      const { frame: f, activeClassId: cid, onCommit: commit } = optsRef.current;
-      if (!draftRef.current || !f || !cid) return;
-      const shape = draftRef.current.commit(toNorm(e));
-      draftRef.current = null;
-      setDraftShape(null);
-      if (pointerIdRef.current !== null) {
-        try {
-          (e.currentTarget as HTMLDivElement).releasePointerCapture(
-            pointerIdRef.current,
-          );
-        } catch {
-          /* noop */
-        }
-        pointerIdRef.current = null;
-      }
-      if (shape) commit(f.id, cid, shape);
-    },
-    [toNorm],
-  );
+  // pointerUp is a no-op in click-to-click mode.
+  const onPointerUp = useCallback(() => {}, []);
 
   return {
     draftShape,
@@ -107,8 +126,8 @@ export function useDrawingTool({
     handlers: {
       onPointerDown,
       onPointerMove,
-      onPointerUp: finishDraft,
-      onPointerCancel: finishDraft,
+      onPointerUp,
+      onPointerCancel: cancelDraft,
     },
   };
 }
