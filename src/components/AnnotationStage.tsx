@@ -121,6 +121,7 @@ export function AnnotationStage() {
   const frameAnnotations = annotations.filter((a) => a.frameId === frame.id);
   const { zoom, px, py } = transform;
   const tool = TOOLS[activeToolId];
+  const isEditMode = interactionMode === "edit";
 
   const onEditStagePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (interactionMode !== "edit" || e.button !== 0) return;
@@ -186,7 +187,7 @@ export function AnnotationStage() {
             top: fitState.top,
             width: fitState.width,
             height: fitState.height,
-            cursor: interactionMode === "draw" ? cursor : "grab",
+            cursor: interactionMode === "draw" ? cursor : "default",
             transformOrigin: "0 0",
             transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
@@ -230,13 +231,14 @@ export function AnnotationStage() {
                   shape={a.shape}
                   klass={klass}
                   selected={a.id === selectedAnnotationId}
-                  hovered={a.id === hoveredAnnotationId}
+                  hovered={isEditMode && a.id === hoveredAnnotationId}
+                  zoom={zoom}
                   onSelect={(e) => {
                     if (interactionMode !== "edit") return;
                     e.stopPropagation();
                     selectAnnotation(a.id);
                   }}
-                  showHandle={interactionMode === "edit" && (a.id === selectedAnnotationId || a.id === hoveredAnnotationId)}
+                  showHandle={isEditMode && a.id === selectedAnnotationId}
                   resizing={a.id === hoveredHandleAnnotationId}
                   onStartMove={(e) => {
                     if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
@@ -250,7 +252,7 @@ export function AnnotationStage() {
                       startClientY: e.clientY,
                       startShape: a.shape,
                     };
-                    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+                    stageRef.current?.setPointerCapture(e.pointerId);
                   }}
                   onStartResize={(e) => {
                     if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
@@ -265,7 +267,7 @@ export function AnnotationStage() {
                       startClientY: e.clientY,
                       startShape: a.shape,
                     };
-                    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+                    stageRef.current?.setPointerCapture(e.pointerId);
                   }}
                 />
               );
@@ -276,6 +278,7 @@ export function AnnotationStage() {
                 klass={
                   classes.find((c) => c.id === activeClassId) ?? classes[0]
                 }
+                zoom={zoom}
                 draft
               />
             )}
@@ -362,11 +365,13 @@ function ShapeView({
   onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
   showHandle?: boolean;
   resizing?: boolean;
+  zoom: number;
 }) {
   if (shape.kind === "rect") {
-    const fillOpacity = hovered || selected ? "44" : "22";
-    const strokeWidth = selected ? 2.5 : hovered ? 2.2 : 1.6;
-    const handleSize = 0.02;
+    const visualZoom = Math.max(0.25, zoom);
+    const fillOpacity = hovered || selected ? "3a" : "22";
+    const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
+    const handleSize = 0.02 / Math.sqrt(visualZoom);
     return (
       <g onPointerDown={onStartMove ?? onSelect} style={{ cursor: onStartMove ? "move" : undefined }}>
         <rect
@@ -382,7 +387,7 @@ function ShapeView({
           style={{ cursor: onStartMove ? "move" : onSelect ? "pointer" : undefined }}
         />
         {/* Outer glow ring when hovered from the panel */}
-        {hovered && !draft && (
+        {hovered && !selected && !draft && (
           <rect
             x={shape.x}
             y={shape.y}
@@ -390,7 +395,7 @@ function ShapeView({
             height={shape.h}
             fill="none"
             stroke={klass.color}
-            strokeWidth={5}
+            strokeWidth={4 / visualZoom}
             strokeOpacity={0.25}
             vectorEffect="non-scaling-stroke"
             style={{ pointerEvents: "none" }}
@@ -404,7 +409,7 @@ function ShapeView({
             height={handleSize}
             fill={klass.color}
             stroke="white"
-            strokeWidth={1.5}
+            strokeWidth={1.5 / visualZoom}
             vectorEffect="non-scaling-stroke"
             onPointerDown={onStartResize}
             style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
