@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { BulkApplyModal } from "./BulkApplyModal";
 import type { ClassShortcutKey } from "@/lib/types";
 
 const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
@@ -24,12 +25,15 @@ export function LabelPanel() {
   const setClassColor = useStore((s) => s.setClassColor);
 
   const annotations = useStore((s) => s.annotations);
+  const frames = useStore((s) => s.frames);
   const activeFrameId = useStore((s) => s.activeFrameId);
   const selectedAnnotationId = useStore((s) => s.selectedAnnotationId);
   const selectAnnotation = useStore((s) => s.selectAnnotation);
   const removeAnnotation = useStore((s) => s.removeAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
   const setHoveredAnnotation = useStore((s) => s.setHoveredAnnotation);
+  const addAnnotation = useStore((s) => s.addAnnotation);
+  const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -42,6 +46,18 @@ export function LabelPanel() {
   const setHoveredAnnotationLocal = useCallback((id: string | null) => {
     setHoveredAnnotation(id);
   }, [setHoveredAnnotation]);
+
+  // Bulk apply state
+  const [bulkAnnotationId, setBulkAnnotationId] = useState<string | null>(null);
+  const [annotCtxMenu, setAnnotCtxMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+
+  // Close annotation context menu on outside click
+  useEffect(() => {
+    if (!annotCtxMenu) return;
+    const handler = () => setAnnotCtxMenu(null);
+    window.addEventListener("pointerdown", handler);
+    return () => window.removeEventListener("pointerdown", handler);
+  }, [annotCtxMenu]);
 
   const frameAnnotations = annotations.filter(
     (a) => a.frameId === activeFrameId,
@@ -95,6 +111,7 @@ export function LabelPanel() {
   }, [removeAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
 
   return (
+    <>
     <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
       <Section title="Classes">
         <p className="mb-2 text-[10px] text-[var(--color-muted)]">
@@ -212,6 +229,10 @@ export function LabelPanel() {
                   key={a.id}
                   onMouseEnter={() => setHoveredAnnotationLocal(a.id)}
                   onMouseLeave={() => setHoveredAnnotationLocal(null)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setAnnotCtxMenu({ id: a.id, x: e.clientX, y: e.clientY });
+                  }}
                   className={[
                     "group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition",
                     selected
@@ -277,6 +298,73 @@ export function LabelPanel() {
         </ul>
       </Section>
     </div>
+
+    {/* Annotation right-click context menu */}
+    {annotCtxMenu && (
+      <div
+        className="fixed z-50 overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] py-1 shadow-xl text-sm"
+        style={{ top: annotCtxMenu.y, left: annotCtxMenu.x }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="block w-full px-4 py-2 text-left text-xs hover:bg-[var(--color-surface-2)]"
+          onClick={() => { setBulkAnnotationId(annotCtxMenu.id); setAnnotCtxMenu(null); }}
+        >
+          일괄 적용…
+        </button>
+      </div>
+    )}
+
+    <BulkApplyTrigger
+      annotationId={bulkAnnotationId}
+      annotations={annotations}
+      frames={frames}
+      exceptedFrameIds={exceptedFrameIds}
+      classes={classes}
+      addAnnotation={addAnnotation}
+      onClose={() => setBulkAnnotationId(null)}
+    />
+    </>
+  );
+}
+
+function BulkApplyTrigger({
+  annotationId,
+  annotations,
+  frames,
+  exceptedFrameIds,
+  classes,
+  addAnnotation,
+  onClose,
+}: {
+  annotationId: string | null;
+  annotations: ReturnType<typeof useStore.getState>["annotations"];
+  frames: ReturnType<typeof useStore.getState>["frames"];
+  exceptedFrameIds: Record<string, boolean>;
+  classes: ReturnType<typeof useStore.getState>["classes"];
+  addAnnotation: ReturnType<typeof useStore.getState>["addAnnotation"];
+  onClose: () => void;
+}) {
+  if (!annotationId) return null;
+  const ann = annotations.find((a) => a.id === annotationId);
+  if (!ann) return null;
+  return (
+    <BulkApplyModal
+      annotation={ann}
+      frames={frames}
+      annotations={annotations}
+      exceptedFrameIds={exceptedFrameIds}
+      classes={classes}
+      onApply={(frameIds) => {
+        for (const frameId of frameIds) {
+          if (frameId !== ann.frameId) {
+            addAnnotation({ frameId, classId: ann.classId, shape: ann.shape });
+          }
+        }
+      }}
+      onClose={onClose}
+    />
   );
 }
 
