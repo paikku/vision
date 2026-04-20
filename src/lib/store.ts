@@ -33,14 +33,17 @@ type StoreState = {
 
   annotations: Annotation[];
   selectedAnnotationId: string | null;
+  hoveredAnnotationId: string | null;
 
   activeToolId: ToolId;
+  centerViewMode: "video" | "frame";
 
   // media + frames
   setMedia: (m: MediaSource | null) => void;
   addFrames: (frames: Frame[]) => void;
   removeFrame: (id: string) => void;
   setActiveFrame: (id: string | null) => void;
+  setCenterViewMode: (mode: "video" | "frame") => void;
 
   // classes
   addClass: (name?: string) => LabelClass;
@@ -53,6 +56,7 @@ type StoreState = {
   updateAnnotation: (id: string, patch: Partial<Annotation>) => void;
   removeAnnotation: (id: string) => void;
   selectAnnotation: (id: string | null) => void;
+  setHoveredAnnotation: (id: string | null) => void;
 
   // tool
   setActiveTool: (id: ToolId) => void;
@@ -72,8 +76,10 @@ export const useStore = create<StoreState>((set, get) => ({
 
   annotations: [],
   selectedAnnotationId: null,
+  hoveredAnnotationId: null,
 
   activeToolId: "rect",
+  centerViewMode: "video",
 
   setMedia: (media) => {
     const prev = get().media;
@@ -86,6 +92,8 @@ export const useStore = create<StoreState>((set, get) => ({
       activeFrameId: null,
       annotations: [],
       selectedAnnotationId: null,
+      hoveredAnnotationId: null,
+      centerViewMode: media?.kind === "video" ? "video" : "frame",
     });
   },
 
@@ -109,7 +117,14 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   setActiveFrame: (id) =>
-    set({ activeFrameId: id, selectedAnnotationId: null }),
+    set({
+      activeFrameId: id,
+      selectedAnnotationId: null,
+      hoveredAnnotationId: null,
+      centerViewMode: id ? "frame" : get().centerViewMode,
+    }),
+
+  setCenterViewMode: (mode) => set({ centerViewMode: mode }),
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -159,9 +174,12 @@ export const useStore = create<StoreState>((set, get) => ({
       annotations: s.annotations.filter((a) => a.id !== id),
       selectedAnnotationId:
         s.selectedAnnotationId === id ? null : s.selectedAnnotationId,
+      hoveredAnnotationId:
+        s.hoveredAnnotationId === id ? null : s.hoveredAnnotationId,
     })),
 
   selectAnnotation: (id) => set({ selectedAnnotationId: id }),
+  setHoveredAnnotation: (id) => set({ hoveredAnnotationId: id }),
 
   setActiveTool: (id) => set({ activeToolId: id }),
 
@@ -175,6 +193,8 @@ export const useStore = create<StoreState>((set, get) => ({
       activeFrameId: null,
       annotations: [],
       selectedAnnotationId: null,
+      hoveredAnnotationId: null,
+      centerViewMode: "video",
     });
   },
 

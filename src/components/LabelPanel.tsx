@@ -14,15 +14,48 @@ export function LabelPanel() {
   const annotations = useStore((s) => s.annotations);
   const activeFrameId = useStore((s) => s.activeFrameId);
   const selectedAnnotationId = useStore((s) => s.selectedAnnotationId);
+  const hoveredAnnotationId = useStore((s) => s.hoveredAnnotationId);
   const selectAnnotation = useStore((s) => s.selectAnnotation);
+  const setHoveredAnnotation = useStore((s) => s.setHoveredAnnotation);
   const removeAnnotation = useStore((s) => s.removeAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
 
   const [draftName, setDraftName] = useState("");
   const frameAnnotations = annotations.filter((a) => a.frameId === activeFrameId);
 
+  const hotkeyToClassIndex: Record<string, number> = {
+    q: 0,
+    w: 1,
+    e: 2,
+    r: 3,
+  };
+
+  const assignHoveredAnnotationClassByHotkey = (key: string) => {
+    const annotationId = hoveredAnnotationId;
+    if (!annotationId) return;
+    const classIndex = hotkeyToClassIndex[key];
+    if (classIndex === undefined) return;
+    const targetClass = classes[classIndex];
+    if (!targetClass) return;
+    updateAnnotation(annotationId, { classId: targetClass.id });
+    selectAnnotation(annotationId);
+  };
+
+  const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null;
+    if (target && /input|textarea|select/i.test(target.tagName)) return;
+    const key = e.key.toLowerCase();
+    if (!(key in hotkeyToClassIndex)) return;
+    assignHoveredAnnotationClassByHotkey(key);
+    e.preventDefault();
+  };
+
   return (
-    <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
+    <div
+      className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm"
+      tabIndex={0}
+      onKeyDown={onListKeyDown}
+    >
       <Section title="Classes">
         <ul className="space-y-1">
           {classes.map((c) => {
@@ -105,7 +138,12 @@ export function LabelPanel() {
                     selected
                       ? "bg-[var(--color-accent-soft)]"
                       : "hover:bg-[var(--color-surface-2)]",
+                    hoveredAnnotationId === a.id
+                      ? "ring-1 ring-[var(--color-accent)]"
+                      : "",
                   ].join(" ")}
+                  onMouseEnter={() => setHoveredAnnotation(a.id)}
+                  onMouseLeave={() => setHoveredAnnotation(null)}
                 >
                   <button
                     type="button"
@@ -157,6 +195,9 @@ export function LabelPanel() {
           </li>
           <li>drag on canvas to draw</li>
           <li>click a box to select</li>
+          <li>
+            <Key>Q/W/E/R</Key> hovered annotation class 1/2/3/4
+          </li>
         </ul>
       </Section>
     </div>
