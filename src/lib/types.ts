@@ -8,6 +8,7 @@ export type MediaSource = {
   width: number;
   height: number;
   duration?: number; // seconds, for video
+  file?: File; // original upload handle for worker pipelines
 };
 
 export type Frame = {

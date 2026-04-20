@@ -59,3 +59,23 @@ Pointer capture ensures drag events aren't lost when the cursor leaves the stage
 ### Styling
 
 Tailwind v4 — design tokens are declared as CSS variables in `app/globals.css` under `@theme`. All components consume them as `var(--color-*)`. No `tailwind.config` file is needed.
+
+## Video timeline and capture pipeline (M1/M2/M3)
+
+The video picker (`src/components/VideoFramePicker.tsx`) now supports three milestone capabilities:
+
+- **M1 (infra):** worker-backed keyframe discovery + sprite generation.
+  - `src/lib/media.ts::buildVideoSprite` builds a sprite atlas from decoded video frames.
+  - `public/workers/sprite-worker.js` parses uploaded MP4 bytes with MP4Box (CDN import inside worker) and returns candidate keyframe timestamps.
+  - If worker parsing fails, `buildVideoSprite` falls back to `evenlySpacedTimes(...)`.
+- **M2 (timeline UI):** strip timeline with immediate hover preview and click-to-seek.
+  - Timeline tiles are rendered from the sprite atlas and mapped by timestamp.
+- **M3 (capture UX):** `requestVideoFrameCallback`-aware capture and keyboard shortcuts.
+  - `captureFrameFromVideoElement(...)` waits for a rendered frame before drawImage.
+  - Picker shortcuts: `Space` (play/pause), `C` (capture), `ArrowLeft/ArrowRight` (seek ±1s, `Shift` => ±5s).
+
+### Notes for maintainers
+
+- `MediaSource` includes `file?: File` so worker preprocessing can read raw uploaded bytes.
+- Sprite/object URLs are revoked in component cleanup paths to avoid leaks.
+- Keep timeline preview interactions non-blocking; expensive work should remain in helper functions and worker paths.
