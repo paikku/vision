@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { FrameStrip } from "./FrameStrip";
@@ -14,6 +15,25 @@ export function Workspace() {
 
   // Register global keyboard shortcuts for the annotation workspace.
   useKeyboardShortcuts();
+
+  // After clicking any non-text interactive element (button, checkbox, etc.)
+  // immediately blur it so keyboard shortcuts remain active.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      if (tag === "button") {
+        requestAnimationFrame(() => el.blur());
+      } else if (tag === "input") {
+        const type = (el as HTMLInputElement).type.toLowerCase();
+        if (["checkbox", "radio"].includes(type)) {
+          requestAnimationFrame(() => el.blur());
+        }
+      }
+    };
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, []);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
