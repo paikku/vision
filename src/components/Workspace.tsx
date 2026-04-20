@@ -1,6 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { FrameStrip } from "./FrameStrip";
 import { LabelPanel } from "./LabelPanel";
 import { MediaDropzone } from "./MediaDropzone";
@@ -10,6 +11,9 @@ import { MainMediaPanel } from "./MainMediaPanel";
 
 export function Workspace() {
   const media = useStore((s) => s.media);
+
+  // Register global keyboard shortcuts for the annotation workspace.
+  useKeyboardShortcuts();
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">

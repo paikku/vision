@@ -1,26 +1,14 @@
 "use client";
 
-import { useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { TOOL_LIST } from "@/lib/tools/registry";
 import type { ToolId } from "@/lib/types";
 
+// Keyboard shortcuts for tools are handled by useKeyboardShortcuts (Workspace).
+
 export function Toolbar() {
   const activeToolId = useStore((s) => s.activeToolId);
   const setActiveTool = useStore((s) => s.setActiveTool);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && /input|textarea|select/i.test(t.tagName)) return;
-      const match = TOOL_LIST.find(
-        (tool) => tool.shortcut?.toLowerCase() === e.key.toLowerCase(),
-      );
-      if (match && !match.disabled) setActiveTool(match.id as ToolId);
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [setActiveTool]);
 
   return (
     <div className="flex flex-col items-center gap-1 border-r border-[var(--color-line)] bg-[var(--color-surface)] px-1.5 py-3">
