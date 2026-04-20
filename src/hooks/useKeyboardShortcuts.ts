@@ -70,7 +70,23 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // 3. Tool shortcuts
+      // 3. Frame navigation (ArrowUp / ArrowDown)
+      if (key === "arrowup" || key === "arrowdown") {
+        const { frames, activeFrameId } = useStore.getState();
+        if (frames.length === 0) return;
+        const idx = frames.findIndex((f) => f.id === activeFrameId);
+        const next =
+          key === "arrowup"
+            ? Math.max(0, idx - 1)
+            : Math.min(frames.length - 1, idx + 1);
+        if (idx !== next) {
+          e.preventDefault();
+          useStore.getState().setActiveFrame(frames[next].id);
+        }
+        return;
+      }
+
+      // 4. Draw/edit mode toggle
       if (key === "c") {
         e.preventDefault();
         const mode = useStore.getState().interactionMode;
@@ -78,7 +94,7 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // 4. Tool shortcuts
+      // 5. Tool shortcuts
       const tool = TOOL_LIST.find(
         (t) => !t.disabled && t.shortcut?.toLowerCase() === key,
       );
