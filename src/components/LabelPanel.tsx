@@ -21,6 +21,7 @@ export function LabelPanel() {
   const removeClass = useStore((s) => s.removeClass);
   const renameClass = useStore((s) => s.renameClass);
   const setClassShortcut = useStore((s) => s.setClassShortcut);
+  const setClassColor = useStore((s) => s.setClassColor);
 
   const annotations = useStore((s) => s.annotations);
   const activeFrameId = useStore((s) => s.activeFrameId);
@@ -125,10 +126,19 @@ export function LabelPanel() {
                   onClick={() => setActiveClass(c.id)}
                   className="flex flex-1 items-center gap-2 text-left"
                 >
-                  <span
-                    className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                  <label
+                    title="Click to change color"
+                    className="h-3.5 w-3.5 shrink-0 cursor-pointer rounded-sm ring-offset-1 hover:ring-2 hover:ring-[var(--color-accent)]"
                     style={{ background: c.color }}
-                  />
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="color"
+                      value={c.color}
+                      onChange={(e) => setClassColor(c.id, e.target.value)}
+                      className="sr-only"
+                    />
+                  </label>
                   <input
                     value={c.name}
                     onChange={(e) => renameClass(c.id, e.target.value)}
