@@ -330,7 +330,7 @@ export function AnnotationStage() {
             )}
           </svg>
 
-          {/* Rect label overlays — HTML so text isn't distorted by SVG preserveAspectRatio */}
+          {/* Rect label overlays — outside box, top-right corner, no background */}
           {showRectLabels && frameAnnotations.map((a) => {
             if (a.shape.kind !== "rect") return null;
             const klass = classes.find((c) => c.id === a.classId);
@@ -340,19 +340,14 @@ export function AnnotationStage() {
             return (
               <div
                 key={a.id}
-                className="pointer-events-none absolute select-none leading-none"
+                className="pointer-events-none absolute select-none leading-none whitespace-nowrap"
                 style={{
-                  left: `${s.x * 100}%`,
+                  left: `${(s.x + s.w) * 100}%`,
                   top: `${s.y * 100}%`,
+                  paddingLeft: `${3 / zoom}px`,
                   fontSize: `${fs}px`,
-                  padding: `${1.5 / zoom}px ${3 / zoom}px`,
-                  background: `${klass.color}cc`,
-                  color: "#fff",
-                  borderRadius: `${2 / zoom}px`,
-                  maxWidth: `${s.w * 100}%`,
-                  overflow: "hidden",
-                  whiteSpace: "nowrap",
-                  textOverflow: "ellipsis",
+                  color: klass.color,
+                  textShadow: `0 0 ${4 / zoom}px rgba(0,0,0,0.85)`,
                 }}
               >
                 {klass.name}
