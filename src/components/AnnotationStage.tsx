@@ -2,6 +2,7 @@
 
 import {
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -26,10 +27,16 @@ export function AnnotationStage() {
   const hoveredAnnotationId = useStore((s) => s.hoveredAnnotationId);
   const addAnnotation = useStore((s) => s.addAnnotation);
   const selectAnnotation = useStore((s) => s.selectAnnotation);
+  const updateAnnotation = useStore((s) => s.updateAnnotation);
+  const interactionMode = useStore((s) => s.interactionMode);
+  const setInteractionMode = useStore((s) => s.setInteractionMode);
+  const keepZoomOnFrameChange = useStore((s) => s.keepZoomOnFrameChange);
+  const setKeepZoomOnFrameChange = useStore((s) => s.setKeepZoomOnFrameChange);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [fitState, setFitState] = useState<FitRect | null>(null);
+  const [hoveredHandleAnnotationId, setHoveredHandleAnnotationId] = useState<string | null>(null);
 
   // Contain-fit layout, recomputed on resize.
   useLayoutEffect(() => {
@@ -59,8 +66,11 @@ export function AnnotationStage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame?.id, frame?.width, frame?.height]);
 
-  const { transform, setFit, zoomFromCenter, reset: resetZoom } =
-    useStageTransform(containerRef, frame?.id);
+  const { transform, setFit, zoomFromCenter, reset: resetZoom, panBy } =
+    useStageTransform(containerRef, {
+      resetKey: frame?.id,
+      preserveOnReset: keepZoomOnFrameChange,
+    });
 
   const { draftShape, cursor, handlers } = useDrawingTool({
     stageRef,
@@ -71,6 +81,34 @@ export function AnnotationStage() {
     onCommit: (frameId, classId, shape) =>
       addAnnotation({ frameId, classId, shape }),
   });
+
+  const dragRef = useRef<
+    | null
+    | {
+        mode: "pan";
+        lastClientX: number;
+        lastClientY: number;
+      }
+    | {
+        mode: "move" | "resize";
+        annotationId: string;
+        startClientX: number;
+        startClientY: number;
+        startShape: { x: number; y: number; w: number; h: number };
+      }
+  >(null);
+
+  const clampRect = useCallback((x: number, y: number, w: number, h: number) => {
+    const minSize = 0.005;
+    const nextW = Math.max(minSize, Math.min(1, w));
+    const nextH = Math.max(minSize, Math.min(1, h));
+    return {
+      x: Math.max(0, Math.min(1 - nextW, x)),
+      y: Math.max(0, Math.min(1 - nextH, y)),
+      w: nextW,
+      h: nextH,
+    };
+  }, []);
 
   if (!frame) {
     return (
@@ -83,6 +121,55 @@ export function AnnotationStage() {
   const frameAnnotations = annotations.filter((a) => a.frameId === frame.id);
   const { zoom, px, py } = transform;
   const tool = TOOLS[activeToolId];
+
+  const onEditStagePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (interactionMode !== "edit" || e.button !== 0) return;
+    if (e.target !== e.currentTarget) return;
+    e.preventDefault();
+    selectAnnotation(null);
+    dragRef.current = {
+      mode: "pan",
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onEditStagePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (interactionMode !== "edit" || !drag) return;
+    if (drag.mode === "pan") {
+      const dx = e.clientX - drag.lastClientX;
+      const dy = e.clientY - drag.lastClientY;
+      drag.lastClientX = e.clientX;
+      drag.lastClientY = e.clientY;
+      panBy(dx, dy);
+      return;
+    }
+
+    const active = frameAnnotations.find((a) => a.id === drag.annotationId);
+    if (!active || active.shape.kind !== "rect" || !fitState) return;
+    const dx = (e.clientX - drag.startClientX) / (fitState.width * zoom);
+    const dy = (e.clientY - drag.startClientY) / (fitState.height * zoom);
+    const start = drag.startShape;
+    const next =
+      drag.mode === "move"
+        ? clampRect(start.x + dx, start.y + dy, start.w, start.h)
+        : clampRect(start.x, start.y, start.w + dx, start.h + dy);
+    updateAnnotation(active.id, { shape: { kind: "rect", ...next } });
+  };
+
+  const onEditStagePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // noop
+      }
+    }
+    dragRef.current = null;
+    setHoveredHandleAnnotationId(null);
+  };
 
   return (
     <div
@@ -99,11 +186,28 @@ export function AnnotationStage() {
             top: fitState.top,
             width: fitState.width,
             height: fitState.height,
-            cursor,
+            cursor: interactionMode === "draw" ? cursor : "grab",
             transformOrigin: "0 0",
             transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
-          {...handlers}
+          onPointerDown={
+            interactionMode === "draw"
+              ? handlers.onPointerDown
+              : onEditStagePointerDown
+          }
+          onPointerMove={
+            interactionMode === "draw"
+              ? handlers.onPointerMove
+              : onEditStagePointerMove
+          }
+          onPointerUp={
+            interactionMode === "draw" ? handlers.onPointerUp : onEditStagePointerUp
+          }
+          onPointerCancel={
+            interactionMode === "draw"
+              ? handlers.onPointerCancel
+              : onEditStagePointerUp
+          }
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -128,8 +232,40 @@ export function AnnotationStage() {
                   selected={a.id === selectedAnnotationId}
                   hovered={a.id === hoveredAnnotationId}
                   onSelect={(e) => {
+                    if (interactionMode !== "edit") return;
                     e.stopPropagation();
                     selectAnnotation(a.id);
+                  }}
+                  showHandle={interactionMode === "edit" && (a.id === selectedAnnotationId || a.id === hoveredAnnotationId)}
+                  resizing={a.id === hoveredHandleAnnotationId}
+                  onStartMove={(e) => {
+                    if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                    selectAnnotation(a.id);
+                    dragRef.current = {
+                      mode: "move",
+                      annotationId: a.id,
+                      startClientX: e.clientX,
+                      startClientY: e.clientY,
+                      startShape: a.shape,
+                    };
+                    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+                  }}
+                  onStartResize={(e) => {
+                    if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                    selectAnnotation(a.id);
+                    setHoveredHandleAnnotationId(a.id);
+                    dragRef.current = {
+                      mode: "resize",
+                      annotationId: a.id,
+                      startClientX: e.clientX,
+                      startClientY: e.clientY,
+                      startShape: a.shape,
+                    };
+                    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
                   }}
                 />
               );
@@ -173,12 +309,32 @@ export function AnnotationStage() {
         >
           fit
         </button>
+        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={keepZoomOnFrameChange}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setKeepZoomOnFrameChange(checked);
+              if (!checked) resetZoom();
+            }}
+          />
+          zoom 유지
+        </label>
+        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={interactionMode === "edit"}
+            onChange={(e) => setInteractionMode(e.target.checked ? "edit" : "draw")}
+          />
+          edit (C)
+        </label>
       </div>
 
       {/* Footer status */}
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-black/55 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
         {frame.width}×{frame.height} · {frameAnnotations.length} labels ·{" "}
-        {tool.name.toLowerCase()} · scroll to zoom · dblclick to fit
+        {interactionMode === "draw" ? tool.name.toLowerCase() : "edit"} · scroll to zoom · dblclick to fit
       </div>
     </div>
   );
@@ -191,6 +347,10 @@ function ShapeView({
   hovered,
   draft,
   onSelect,
+  onStartMove,
+  onStartResize,
+  showHandle,
+  resizing,
 }: {
   shape: Shape;
   klass: LabelClass;
@@ -198,12 +358,17 @@ function ShapeView({
   hovered?: boolean;
   draft?: boolean;
   onSelect?: (e: ReactPointerEvent) => void;
+  onStartMove?: (e: ReactPointerEvent<SVGGElement>) => void;
+  onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
+  showHandle?: boolean;
+  resizing?: boolean;
 }) {
   if (shape.kind === "rect") {
     const fillOpacity = hovered || selected ? "44" : "22";
     const strokeWidth = selected ? 2.5 : hovered ? 2.2 : 1.6;
+    const handleSize = 0.02;
     return (
-      <g onPointerDown={onSelect}>
+      <g onPointerDown={onStartMove ?? onSelect} style={{ cursor: onStartMove ? "move" : undefined }}>
         <rect
           x={shape.x}
           y={shape.y}
@@ -214,7 +379,7 @@ function ShapeView({
           strokeWidth={strokeWidth}
           strokeDasharray={draft ? "5 4" : undefined}
           vectorEffect="non-scaling-stroke"
-          style={{ cursor: onSelect ? "pointer" : undefined }}
+          style={{ cursor: onStartMove ? "move" : onSelect ? "pointer" : undefined }}
         />
         {/* Outer glow ring when hovered from the panel */}
         {hovered && !draft && (
@@ -229,6 +394,20 @@ function ShapeView({
             strokeOpacity={0.25}
             vectorEffect="non-scaling-stroke"
             style={{ pointerEvents: "none" }}
+          />
+        )}
+        {showHandle && !draft && (
+          <rect
+            x={shape.x + shape.w - handleSize}
+            y={shape.y + shape.h - handleSize}
+            width={handleSize}
+            height={handleSize}
+            fill={klass.color}
+            stroke="white"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+            onPointerDown={onStartResize}
+            style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
           />
         )}
       </g>
