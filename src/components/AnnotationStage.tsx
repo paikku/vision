@@ -284,8 +284,8 @@ export function AnnotationStage() {
                     selectAnnotation(a.id);
                   }}
                   showHandle={isEditMode && a.id === selectedAnnotationId}
-                  onStartMove={(e) => {
-                    if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
+                  onStartMove={isEditMode ? (e) => {
+                    if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
                     selectAnnotation(a.id);
@@ -298,9 +298,9 @@ export function AnnotationStage() {
                       startShape: a.shape,
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
-                  }}
-                  onStartResize={(e) => {
-                    if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
+                  } : undefined}
+                  onStartResize={isEditMode ? (e) => {
+                    if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
                     selectAnnotation(a.id);
@@ -314,7 +314,7 @@ export function AnnotationStage() {
                       startShape: a.shape,
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
-                  }}
+                  } : undefined}
                 />
               );
             })}
