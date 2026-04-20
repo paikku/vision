@@ -128,7 +128,8 @@ export function AnnotationStage() {
 
   const onEditStagePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (interactionMode !== "edit" || e.button !== 0) return;
-    if (e.target !== e.currentTarget) return;
+    const target = e.target as HTMLElement | SVGElement;
+    if (target.closest('[data-annotation-interactive="true"]')) return;
     e.preventDefault();
     selectAnnotation(null);
     dragRef.current = {
@@ -383,9 +384,17 @@ function ShapeView({
     const visualZoom = Math.max(0.25, zoom);
     const fillOpacity = hovered || selected ? "3a" : "22";
     const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
-    const handleSize = 0.02 / Math.sqrt(visualZoom);
+    const handleSize = Math.max(
+      0.008,
+      Math.min(0.035, Math.min(shape.w, shape.h) * 0.25) / Math.sqrt(visualZoom),
+    );
+    const handleStrokeWidth = Math.max(0.8, 1.8 / visualZoom);
     return (
-      <g onPointerDown={onStartMove ?? onSelect} style={{ cursor: onStartMove ? "move" : undefined }}>
+      <g
+        data-annotation-interactive="true"
+        onPointerDown={onStartMove ?? onSelect}
+        style={{ cursor: onStartMove ? "move" : undefined }}
+      >
         <rect
           x={shape.x}
           y={shape.y}
@@ -414,18 +423,28 @@ function ShapeView({
           />
         )}
         {showHandle && !draft && (
-          <rect
-            x={shape.x + shape.w - handleSize}
-            y={shape.y + shape.h - handleSize}
-            width={handleSize}
-            height={handleSize}
-            fill={klass.color}
-            stroke="white"
-            strokeWidth={1.5 / visualZoom}
-            vectorEffect="non-scaling-stroke"
-            onPointerDown={onStartResize}
-            style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
-          />
+          <>
+            <path
+              d={`M ${shape.x + shape.w - handleSize} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h - handleSize}`}
+              fill="none"
+              stroke={klass.color}
+              strokeWidth={handleStrokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+              style={{ pointerEvents: "none" }}
+            />
+            <rect
+              x={shape.x + shape.w - handleSize * 1.6}
+              y={shape.y + shape.h - handleSize * 1.6}
+              width={handleSize * 1.6}
+              height={handleSize * 1.6}
+              fill="transparent"
+              onPointerDown={onStartResize}
+              data-annotation-interactive="true"
+              style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
+            />
+          </>
         )}
       </g>
     );
