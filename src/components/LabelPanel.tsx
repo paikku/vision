@@ -57,41 +57,44 @@ export function LabelPanel() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
-      const key = e.key.toLowerCase() as ClassShortcutKey;
-      if (!CLASS_SHORTCUT_KEYS.includes(key)) return;
+      const key = e.key.toLowerCase();
 
-      const hoveredClass = hoveredClassIdRef.current;
-      if (hoveredClass) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        setClassShortcut(hoveredClass, key);
-        return;
+      // Priority 1: hovering a class row + Q/W/E/R → assign shortcut
+      if (CLASS_SHORTCUT_KEYS.includes(key as ClassShortcutKey)) {
+        const hoveredClass = hoveredClassIdRef.current;
+        if (hoveredClass) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setClassShortcut(hoveredClass, key as ClassShortcutKey);
+          return;
+        }
       }
 
-      const hoveredAnnotation = hoveredAnnotationIdRef.current;
+      // Priority 2: hovering an annotation row
+      const hoveredAnnotation = useStore.getState().hoveredAnnotationId;
       if (hoveredAnnotation) {
-        if (REMOVE_KEYS.has(e.key.toLowerCase())) {
+        // Delete/Backspace → remove hovered annotation
+        if (REMOVE_KEYS.has(key)) {
           e.preventDefault();
           e.stopImmediatePropagation();
           removeAnnotation(hoveredAnnotation);
           setHoveredAnnotationLocal(null);
-          if (useStore.getState().selectedAnnotationId === hoveredAnnotation) {
-            selectAnnotation(null);
-          }
           return;
         }
-
-        const klass = useStore.getState().classes.find((c) => c.shortcutKey === key);
-        if (klass) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          updateAnnotation(hoveredAnnotation, { classId: klass.id });
+        // Q/W/E/R → change hovered annotation's class
+        if (CLASS_SHORTCUT_KEYS.includes(key as ClassShortcutKey)) {
+          const klass = useStore.getState().classes.find((c) => c.shortcutKey === key);
+          if (klass) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            updateAnnotation(hoveredAnnotation, { classId: klass.id });
+          }
         }
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [removeAnnotation, selectAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
+  }, [removeAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
 
   return (
     <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
