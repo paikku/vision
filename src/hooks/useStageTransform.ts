@@ -32,7 +32,10 @@ const PINCH_SPEED = 0.05; // when ctrlKey (pinch gesture)
  */
 export function useStageTransform(
   containerRef: RefObject<HTMLDivElement | null>,
-  resetKey?: unknown,
+  options?: {
+    resetKey?: unknown;
+    preserveOnReset?: boolean;
+  },
 ) {
   const [transform, setTransform] = useState<StageTransform>(INITIAL);
   const fitRef = useRef<FitRect | null>(null);
@@ -44,8 +47,9 @@ export function useStageTransform(
 
   // Reset to fit when active frame changes.
   useEffect(() => {
+    if (options?.preserveOnReset) return;
     setTransform(INITIAL);
-  }, [resetKey]);
+  }, [options?.preserveOnReset, options?.resetKey]);
 
   // Compute new transform that keeps a given container-space point stationary.
   const zoomAt = useCallback(
@@ -81,6 +85,13 @@ export function useStageTransform(
   );
 
   const reset = useCallback(() => setTransform(INITIAL), []);
+  const panBy = useCallback((dx: number, dy: number) => {
+    setTransform((prev) => ({
+      ...prev,
+      px: prev.px + dx,
+      py: prev.py + dy,
+    }));
+  }, []);
 
   // Non-passive wheel listener so we can preventDefault.
   useEffect(() => {
@@ -99,5 +110,5 @@ export function useStageTransform(
     return () => container.removeEventListener("wheel", onWheel);
   }, [containerRef, zoomAt]);
 
-  return { transform, setFit, zoomFromCenter, reset };
+  return { transform, setFit, zoomFromCenter, reset, panBy };
 }

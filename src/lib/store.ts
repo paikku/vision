@@ -38,6 +38,8 @@ type StoreState = {
 
   activeToolId: ToolId;
   centerViewMode: "video" | "frame";
+  keepZoomOnFrameChange: boolean;
+  interactionMode: "draw" | "edit";
 
   // media + frames
   setMedia: (m: MediaSource | null) => void;
@@ -45,6 +47,7 @@ type StoreState = {
   removeFrame: (id: string) => void;
   setActiveFrame: (id: string | null) => void;
   setCenterViewMode: (mode: "video" | "frame") => void;
+  setKeepZoomOnFrameChange: (keep: boolean) => void;
 
   // classes
   addClass: (name?: string) => LabelClass;
@@ -62,6 +65,7 @@ type StoreState = {
 
   // tool
   setActiveTool: (id: ToolId) => void;
+  setInteractionMode: (mode: "draw" | "edit") => void;
 
   // utility
   reset: () => void;
@@ -82,6 +86,8 @@ export const useStore = create<StoreState>((set, get) => ({
 
   activeToolId: "rect",
   centerViewMode: "video",
+  keepZoomOnFrameChange: false,
+  interactionMode: "draw",
 
   setMedia: (media) => {
     const prev = get().media;
@@ -126,6 +132,7 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
 
   setCenterViewMode: (mode) => set({ centerViewMode: mode }),
+  setKeepZoomOnFrameChange: (keepZoomOnFrameChange) => set({ keepZoomOnFrameChange }),
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -194,6 +201,7 @@ export const useStore = create<StoreState>((set, get) => ({
   setHoveredAnnotation: (id) => set({ hoveredAnnotationId: id }),
 
   setActiveTool: (id) => set({ activeToolId: id }),
+  setInteractionMode: (interactionMode) => set({ interactionMode }),
 
   reset: () => {
     const s = get();
@@ -206,6 +214,8 @@ export const useStore = create<StoreState>((set, get) => ({
       annotations: [],
       selectedAnnotationId: null,
       centerViewMode: "video",
+      keepZoomOnFrameChange: false,
+      interactionMode: "draw",
     });
   },
 
