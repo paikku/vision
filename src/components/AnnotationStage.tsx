@@ -414,10 +414,11 @@ function ShapeView({
     const visualZoom = Math.max(0.25, zoom);
     const fillOpacity = hovered || selected ? "3a" : "22";
     const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
-    // Hit area: 25% of the smaller dimension, capped at 3% of frame
-    const hitSize = Math.min(Math.min(shape.w, shape.h) * 0.25, 0.03);
-    const hitWidth = Math.min(shape.w / 3, hitSize);
-    const hitHeight = Math.min(shape.h / 3, hitSize);
+    // Hit area: ~20 screen-pixels regardless of zoom, capped to 45% of shape.
+    // 0.025/zoom converts to a constant visual pixel size (assuming ~800px stage).
+    const hitNorm = Math.min(0.06, 0.025 / zoom);
+    const hitWidth = Math.min(shape.w * 0.45, hitNorm);
+    const hitHeight = Math.min(shape.h * 0.45, hitNorm);
     return (
       <g
         data-annotation-interactive="true"
