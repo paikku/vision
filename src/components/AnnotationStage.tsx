@@ -39,6 +39,9 @@ export function AnnotationStage() {
   const [fitState, setFitState] = useState<FitRect | null>(null);
   const [hoveredHandleAnnotationId, setHoveredHandleAnnotationId] = useState<string | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+  const [showRectLabels, setShowRectLabels] = useState(true);
+  const [showCursorLabel, setShowCursorLabel] = useState(true);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
   // Contain-fit layout, recomputed on resize.
   useLayoutEffect(() => {
@@ -196,6 +199,8 @@ export function AnnotationStage() {
       ref={containerRef}
       className="relative h-full w-full overflow-hidden bg-checker"
       onDoubleClick={resetZoom}
+      onMouseMove={(e) => setCursorPos({ x: e.clientX, y: e.clientY })}
+      onMouseLeave={() => setCursorPos(null)}
     >
       {fitState && (
         <div
@@ -324,8 +329,52 @@ export function AnnotationStage() {
               />
             )}
           </svg>
+
+          {/* Rect label overlays — HTML so text isn't distorted by SVG preserveAspectRatio */}
+          {showRectLabels && frameAnnotations.map((a) => {
+            if (a.shape.kind !== "rect") return null;
+            const klass = classes.find((c) => c.id === a.classId);
+            if (!klass) return null;
+            const s = a.shape;
+            const fs = Math.max(4, 11 / zoom);
+            return (
+              <div
+                key={a.id}
+                className="pointer-events-none absolute select-none leading-none"
+                style={{
+                  left: `${s.x * 100}%`,
+                  top: `${s.y * 100}%`,
+                  fontSize: `${fs}px`,
+                  padding: `${1.5 / zoom}px ${3 / zoom}px`,
+                  background: `${klass.color}cc`,
+                  color: "#fff",
+                  borderRadius: `${2 / zoom}px`,
+                  maxWidth: `${s.w * 100}%`,
+                  overflow: "hidden",
+                  whiteSpace: "nowrap",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {klass.name}
+              </div>
+            );
+          })}
         </div>
       )}
+
+      {/* Cursor label — fixed so it's unaffected by stageRef transform */}
+      {showCursorLabel && interactionMode !== "edit" && cursorPos && (() => {
+        const cls = classes.find((c) => c.id === activeClassId);
+        if (!cls) return null;
+        return (
+          <div
+            className="pointer-events-none fixed z-50 select-none rounded px-2 py-0.5 text-xs font-semibold text-white shadow-md"
+            style={{ left: cursorPos.x + 14, top: cursorPos.y + 14, background: cls.color }}
+          >
+            {cls.name}
+          </div>
+        );
+      })()}
 
       {/* Zoom controls — double-click stage to reset */}
       <div className="absolute right-3 top-3 flex items-center gap-1 rounded-md bg-black/60 p-1 text-xs text-white backdrop-blur">
@@ -372,6 +421,22 @@ export function AnnotationStage() {
             onChange={(e) => setInteractionMode(e.target.checked ? "edit" : "draw")}
           />
           edit (C)
+        </label>
+        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={showRectLabels}
+            onChange={(e) => setShowRectLabels(e.target.checked)}
+          />
+          라벨
+        </label>
+        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={showCursorLabel}
+            onChange={(e) => setShowCursorLabel(e.target.checked)}
+          />
+          커서라벨
         </label>
       </div>
 
