@@ -5,7 +5,7 @@ import { useStore } from "@/lib/store";
 import type { ClassShortcutKey } from "@/lib/types";
 
 const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
-const REMOVE_KEYS = new Set(["delete", "backspace"]);
+const REMOVE_KEYS = new Set(["d"]);
 
 function isEditableTarget(target: EventTarget | null) {
   if (!target) return false;
@@ -268,17 +268,12 @@ export function LabelPanel() {
 
       <Section title="Shortcuts">
         <ul className="space-y-1 text-xs text-[var(--color-muted)]">
-          <li>
-            <Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class
-          </li>
-          <li>
-            hover annotation + <Key>Q</Key>–<Key>R</Key> change its class
-          </li>
-          <li>
-            <Key>⌫</Key> delete selected box
-          </li>
-          <li>scroll wheel → zoom · dblclick → fit</li>
-          <li><Key>C</Key> toggle draw/edit mode</li>
+          <li><Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class</li>
+          <li>hover annotation + <Key>Q</Key>–<Key>R</Key> change class</li>
+          <li><Key>D</Key> delete selected / hovered box</li>
+          <li><Key>1</Key> prev frame · <Key>2</Key> next frame</li>
+          <li><Key>C</Key> toggle draw/edit · <Key>Esc</Key> cancel draw</li>
+          <li>scroll → zoom · dblclick → fit</li>
         </ul>
       </Section>
     </div>
