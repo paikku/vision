@@ -417,7 +417,7 @@ function ShapeView({
     const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
     // Hit area: ~20 screen-pixels regardless of zoom, capped to 45% of shape.
     // 0.025/zoom converts to a constant visual pixel size (assuming ~800px stage).
-    const hitNorm = Math.min(0.06, 0.025 / zoom);
+    const hitNorm = Math.min(0.06, 0.055 / zoom);
     const hitWidth = Math.min(shape.w * 0.45, hitNorm);
     const hitHeight = Math.min(shape.h * 0.45, hitNorm);
     return (
