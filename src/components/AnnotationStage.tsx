@@ -235,6 +235,27 @@ export function AnnotationStage() {
             className="absolute inset-0 h-full w-full"
             viewBox="0 0 1 1"
             preserveAspectRatio="none"
+            onPointerMove={(e) => {
+              if (!stageRef.current) return;
+              const b = stageRef.current.getBoundingClientRect();
+              const mx = (e.clientX - b.left) / b.width;
+              const my = (e.clientY - b.top) / b.height;
+              const hits = frameAnnotations.filter((a) => {
+                if (a.shape.kind !== "rect") return false;
+                const { x, y, w, h } = a.shape;
+                return mx >= x && mx <= x + w && my >= y && my <= y + h;
+              });
+              if (hits.length === 0) { setHoveredAnnotation(null); return; }
+              const closest = hits.reduce((best, cur) => {
+                const bs = best.shape as { x: number; y: number; w: number; h: number };
+                const cs = cur.shape as { x: number; y: number; w: number; h: number };
+                const bd = Math.hypot(mx - (bs.x + bs.w / 2), my - (bs.y + bs.h / 2));
+                const cd = Math.hypot(mx - (cs.x + cs.w / 2), my - (cs.y + cs.h / 2));
+                return cd < bd ? cur : best;
+              });
+              setHoveredAnnotation(closest.id);
+            }}
+            onPointerLeave={() => setHoveredAnnotation(null)}
           >
             {frameAnnotations.map((a) => {
               const klass = classes.find((c) => c.id === a.classId);
@@ -247,8 +268,6 @@ export function AnnotationStage() {
                   selected={a.id === selectedAnnotationId}
                   hovered={a.id === hoveredAnnotationId}
                   zoom={zoom}
-                  onPointerEnter={() => setHoveredAnnotation(a.id)}
-                  onPointerLeave={() => setHoveredAnnotation(null)}
                   onSelect={(e) => {
                     if (interactionMode !== "edit") return;
                     e.stopPropagation();
