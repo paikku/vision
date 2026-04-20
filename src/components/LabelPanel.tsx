@@ -11,7 +11,14 @@ const REMOVE_KEYS = new Set(["d"]);
 function isEditableTarget(target: EventTarget | null) {
   if (!target) return false;
   const el = target as HTMLElement;
-  return /input|textarea|select/i.test(el.tagName) || el.isContentEditable;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName.toLowerCase();
+  if (tag === "textarea" || tag === "select") return true;
+  if (tag === "input") {
+    const type = (el as HTMLInputElement).type.toLowerCase();
+    return !["checkbox", "radio", "button", "submit", "reset", "file", "color", "range"].includes(type);
+  }
+  return false;
 }
 
 export function LabelPanel() {

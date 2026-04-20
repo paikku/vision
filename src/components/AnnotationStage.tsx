@@ -38,6 +38,10 @@ export function AnnotationStage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [fitState, setFitState] = useState<FitRect | null>(null);
   const [hoveredHandleAnnotationId, setHoveredHandleAnnotationId] = useState<string | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const [showRectLabels, setShowRectLabels] = useState(true);
+  const [showCursorLabel, setShowCursorLabel] = useState(true);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
   // Contain-fit layout, recomputed on resize.
   useLayoutEffect(() => {
@@ -78,6 +82,7 @@ export function AnnotationStage() {
     frame,
     activeClassId,
     activeToolId,
+    interactionMode,
     onBeginDraw: () => selectAnnotation(null),
     onCommit: (frameId, classId, shape) =>
       addAnnotation({ frameId, classId, shape }),
@@ -102,16 +107,20 @@ export function AnnotationStage() {
 
   const DRAG_ACTIVATE_DISTANCE_PX = 2;
 
-  const clampRect = useCallback((x: number, y: number, w: number, h: number) => {
-    const minSize = 0.005;
-    const nextW = Math.max(minSize, Math.min(1, w));
-    const nextH = Math.max(minSize, Math.min(1, h));
-    return {
-      x: Math.max(0, Math.min(1 - nextW, x)),
-      y: Math.max(0, Math.min(1 - nextH, y)),
-      w: nextW,
-      h: nextH,
-    };
+  // Move: only clamp position, never touch size.
+  const clampMove = useCallback((x: number, y: number, w: number, h: number) => ({
+    x: Math.max(0, Math.min(1 - w, x)),
+    y: Math.max(0, Math.min(1 - h, y)),
+    w,
+    h,
+  }), []);
+
+  // Resize: enforce minimum size, keep top-left fixed.
+  const clampResize = useCallback((x: number, y: number, w: number, h: number) => {
+    const minSize = 0.0005;
+    const nextW = Math.max(minSize, Math.min(1 - x, w));
+    const nextH = Math.max(minSize, Math.min(1 - y, h));
+    return { x, y, w: nextW, h: nextH };
   }, []);
 
   if (!frame) {
@@ -139,6 +148,7 @@ export function AnnotationStage() {
       lastClientY: e.clientY,
     };
     e.currentTarget.setPointerCapture(e.pointerId);
+    setIsPanning(true);
   };
 
   const onEditStagePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -166,8 +176,8 @@ export function AnnotationStage() {
     const start = drag.startShape;
     const next =
       drag.mode === "move"
-        ? clampRect(start.x + dx, start.y + dy, start.w, start.h)
-        : clampRect(start.x, start.y, start.w + dx, start.h + dy);
+        ? clampMove(start.x + dx, start.y + dy, start.w, start.h)
+        : clampResize(start.x, start.y, start.w + dx, start.h + dy);
     updateAnnotation(active.id, { shape: { kind: "rect", ...next } });
   };
 
@@ -181,6 +191,7 @@ export function AnnotationStage() {
     }
     dragRef.current = null;
     setHoveredHandleAnnotationId(null);
+    setIsPanning(false);
   };
 
   return (
@@ -188,6 +199,8 @@ export function AnnotationStage() {
       ref={containerRef}
       className="relative h-full w-full overflow-hidden bg-checker"
       onDoubleClick={resetZoom}
+      onMouseMove={(e) => setCursorPos({ x: e.clientX, y: e.clientY })}
+      onMouseLeave={() => setCursorPos(null)}
     >
       {fitState && (
         <div
@@ -198,7 +211,7 @@ export function AnnotationStage() {
             top: fitState.top,
             width: fitState.width,
             height: fitState.height,
-            cursor: interactionMode === "draw" ? cursor : "default",
+            cursor: interactionMode === "draw" ? cursor : isPanning ? "grabbing" : "grab",
             transformOrigin: "0 0",
             transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
@@ -232,6 +245,27 @@ export function AnnotationStage() {
             className="absolute inset-0 h-full w-full"
             viewBox="0 0 1 1"
             preserveAspectRatio="none"
+            onPointerMove={(e) => {
+              if (!stageRef.current) return;
+              const b = stageRef.current.getBoundingClientRect();
+              const mx = (e.clientX - b.left) / b.width;
+              const my = (e.clientY - b.top) / b.height;
+              const hits = frameAnnotations.filter((a) => {
+                if (a.shape.kind !== "rect") return false;
+                const { x, y, w, h } = a.shape;
+                return mx >= x && mx <= x + w && my >= y && my <= y + h;
+              });
+              if (hits.length === 0) { setHoveredAnnotation(null); return; }
+              const closest = hits.reduce((best, cur) => {
+                const bs = best.shape as { x: number; y: number; w: number; h: number };
+                const cs = cur.shape as { x: number; y: number; w: number; h: number };
+                const bd = Math.hypot(mx - (bs.x + bs.w / 2), my - (bs.y + bs.h / 2));
+                const cd = Math.hypot(mx - (cs.x + cs.w / 2), my - (cs.y + cs.h / 2));
+                return cd < bd ? cur : best;
+              });
+              setHoveredAnnotation(closest.id);
+            }}
+            onPointerLeave={() => setHoveredAnnotation(null)}
           >
             {frameAnnotations.map((a) => {
               const klass = classes.find((c) => c.id === a.classId);
@@ -244,17 +278,13 @@ export function AnnotationStage() {
                   selected={a.id === selectedAnnotationId}
                   hovered={a.id === hoveredAnnotationId}
                   zoom={zoom}
-                  onPointerEnter={() => setHoveredAnnotation(a.id)}
-                  onPointerLeave={() => setHoveredAnnotation(null)}
-                  onSelect={(e) => {
-                    if (interactionMode !== "edit") return;
+                  onSelect={isEditMode ? (e) => {
                     e.stopPropagation();
                     selectAnnotation(a.id);
-                  }}
+                  } : undefined}
                   showHandle={isEditMode && a.id === selectedAnnotationId}
-                  resizing={a.id === hoveredHandleAnnotationId}
-                  onStartMove={(e) => {
-                    if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
+                  onStartMove={isEditMode ? (e) => {
+                    if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
                     selectAnnotation(a.id);
@@ -267,9 +297,9 @@ export function AnnotationStage() {
                       startShape: a.shape,
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
-                  }}
-                  onStartResize={(e) => {
-                    if (interactionMode !== "edit" || a.shape.kind !== "rect") return;
+                  } : undefined}
+                  onStartResize={isEditMode ? (e) => {
+                    if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
                     selectAnnotation(a.id);
@@ -283,7 +313,7 @@ export function AnnotationStage() {
                       startShape: a.shape,
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
-                  }}
+                  } : undefined}
                 />
               );
             })}
@@ -298,8 +328,50 @@ export function AnnotationStage() {
               />
             )}
           </svg>
+
+          {/* Rect label overlays — outside box, top-right corner, no background.
+              transform: scale(1/zoom) counteracts the parent stageRef scale so the
+              label stays at a fixed pixel size regardless of zoom level. */}
+          {showRectLabels && frameAnnotations.map((a) => {
+            if (a.shape.kind !== "rect") return null;
+            const klass = classes.find((c) => c.id === a.classId);
+            if (!klass) return null;
+            const s = a.shape;
+            return (
+              <div
+                key={a.id}
+                className="pointer-events-none absolute select-none leading-none whitespace-nowrap"
+                style={{
+                  left: `${(s.x + s.w) * 100}%`,
+                  top: `${s.y * 100}%`,
+                  transform: `scale(${1 / zoom})`,
+                  transformOrigin: "0 0",
+                  fontSize: "11px",
+                  paddingLeft: "3px",
+                  color: klass.color,
+                  textShadow: "0 0 4px rgba(0,0,0,0.85)",
+                }}
+              >
+                {klass.name}
+              </div>
+            );
+          })}
         </div>
       )}
+
+      {/* Cursor label — fixed so it's unaffected by stageRef transform */}
+      {showCursorLabel && interactionMode !== "edit" && cursorPos && (() => {
+        const cls = classes.find((c) => c.id === activeClassId);
+        if (!cls) return null;
+        return (
+          <div
+            className="pointer-events-none fixed z-50 select-none rounded px-2 py-0.5 text-xs font-semibold text-white shadow-md"
+            style={{ left: cursorPos.x + 14, top: cursorPos.y + 14, background: cls.color }}
+          >
+            {cls.name}
+          </div>
+        );
+      })()}
 
       {/* Zoom controls — double-click stage to reset */}
       <div className="absolute right-3 top-3 flex items-center gap-1 rounded-md bg-black/60 p-1 text-xs text-white backdrop-blur">
@@ -347,6 +419,22 @@ export function AnnotationStage() {
           />
           edit (C)
         </label>
+        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={showRectLabels}
+            onChange={(e) => setShowRectLabels(e.target.checked)}
+          />
+          라벨
+        </label>
+        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+          <input
+            type="checkbox"
+            checked={showCursorLabel}
+            onChange={(e) => setShowCursorLabel(e.target.checked)}
+          />
+          커서라벨
+        </label>
       </div>
 
       {/* Footer status */}
@@ -370,7 +458,6 @@ function ShapeView({
   onStartMove,
   onStartResize,
   showHandle,
-  resizing,
   zoom,
 }: {
   shape: Shape;
@@ -384,28 +471,17 @@ function ShapeView({
   onStartMove?: (e: ReactPointerEvent<SVGGElement>) => void;
   onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
   showHandle?: boolean;
-  resizing?: boolean;
   zoom: number;
 }) {
   if (shape.kind === "rect") {
     const visualZoom = Math.max(0.25, zoom);
     const fillOpacity = hovered || selected ? "3a" : "22";
     const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
-    const maxHandleWidth = shape.w / 3;
-    const maxHandleHeight = shape.h / 3;
-    const handleSize = Math.max(
-      0.003,
-      Math.min(
-        0.03,
-        Math.min(shape.w, shape.h) * 0.25,
-        maxHandleWidth,
-        maxHandleHeight,
-      ) / Math.sqrt(visualZoom),
-    );
-    const handleStrokeWidth = Math.max(0.8, 1.8 / visualZoom);
-    const handleColor = getContrastingHandleColor(klass.color);
-    const hitWidth = Math.min(shape.w / 3, handleSize * 1.35);
-    const hitHeight = Math.min(shape.h / 3, handleSize * 1.35);
+    // Hit area: ~20 screen-pixels regardless of zoom, capped to 45% of shape.
+    // 0.025/zoom converts to a constant visual pixel size (assuming ~800px stage).
+    const hitNorm = Math.min(0.06, 0.055 / zoom);
+    const hitWidth = Math.min(shape.w * 0.45, hitNorm);
+    const hitHeight = Math.min(shape.h * 0.45, hitNorm);
     return (
       <g
         data-annotation-interactive="true"
@@ -441,29 +517,18 @@ function ShapeView({
             style={{ pointerEvents: "none" }}
           />
         )}
+        {/* Resize hit area (no visual, cursor only) */}
         {showHandle && !draft && (
-          <>
-            <path
-              d={`M ${shape.x + shape.w - handleSize} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h} L ${shape.x + shape.w} ${shape.y + shape.h - handleSize}`}
-              fill="none"
-              stroke={handleColor}
-              strokeWidth={handleStrokeWidth}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
-              style={{ pointerEvents: "none" }}
-            />
-            <rect
-              x={shape.x + shape.w - hitWidth}
-              y={shape.y + shape.h - hitHeight}
-              width={hitWidth}
-              height={hitHeight}
-              fill="transparent"
-              onPointerDown={onStartResize}
-              data-annotation-interactive="true"
-              style={{ cursor: resizing ? "nwse-resize" : "nwse-resize" }}
-            />
-          </>
+          <rect
+            x={shape.x + shape.w - hitWidth}
+            y={shape.y + shape.h - hitHeight}
+            width={hitWidth}
+            height={hitHeight}
+            fill="transparent"
+            onPointerDown={onStartResize}
+            data-annotation-interactive="true"
+            style={{ cursor: "nwse-resize" }}
+          />
         )}
       </g>
     );
@@ -471,7 +536,8 @@ function ShapeView({
   return null;
 }
 
-function getContrastingHandleColor(hexColor: string) {
+// Retained for possible future use
+function _getContrastingHandleColor(hexColor: string) {
   const hex = hexColor.replace("#", "");
   if (!/^[0-9a-fA-F]{6}$/.test(hex)) return "#ffffff";
   const r = Number.parseInt(hex.slice(0, 2), 16);

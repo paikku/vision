@@ -1,7 +1,7 @@
 import type { Point, RectShape } from "../types";
 import type { AnnotationTool } from "./types";
 
-const MIN_SIZE = 0.005; // ~0.5% of frame on either axis
+const MIN_SIZE = 0.0005; // ~0.05% of frame on either axis
 
 const rectFrom = (a: Point, b: Point): RectShape => ({
   kind: "rect",
