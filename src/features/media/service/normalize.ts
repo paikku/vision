@@ -52,6 +52,8 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
   async normalize(file: File, opts?: NormalizeOptions): Promise<File | null> {
     const endpoint = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT;
     if (!endpoint) return null;
+    const profile = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_PROFILE ?? "web-h264";
+    const asyncEndpoint = `${endpoint.replace(/\/+$/, "")}/jobs`;
 
     return new Promise<File | null>((resolve) => {
       let completed = false;
@@ -60,79 +62,83 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
         completed = true;
         resolve(value);
       };
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", endpoint);
-      xhr.responseType = "arraybuffer";
-
       const emit = (phase: NormalizePhase, progress?: number) =>
         opts?.onProgress?.({ phase, progress, via: "server" });
 
       emit("uploading", 0);
+      const runRequest = (target: string, mode: "async" | "sync") => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", target);
+        xhr.responseType = "arraybuffer";
 
-      xhr.upload.onprogress = (e) => {
-        emit(
-          "uploading",
-          e.lengthComputable ? e.loaded / e.total : undefined,
-        );
+        xhr.upload.onprogress = (e) => {
+          emit(
+            "uploading",
+            e.lengthComputable ? e.loaded / e.total : undefined,
+          );
+        };
+        xhr.upload.onload = () => emit("decoding");
+
+        xhr.onprogress = (e) => {
+          emit(
+            "downloading",
+            e.lengthComputable ? e.loaded / e.total : undefined,
+          );
+        };
+
+        xhr.onload = () => {
+          const contentType = xhr.getResponseHeader("Content-Type") ?? "";
+          const isJson = contentType.includes("application/json");
+
+          if (xhr.status === 202 && isJson) {
+            void this.handleJobMode({
+              endpoint,
+              file,
+              xhr,
+              emit,
+              resolve: resolveOnce,
+              signal: opts?.signal,
+            });
+            return;
+          }
+
+          if (mode === "async" && [404, 405, 501].includes(xhr.status)) {
+            runRequest(endpoint, "sync");
+            return;
+          }
+
+          if (xhr.status < 200 || xhr.status >= 300) {
+            resolveOnce(null);
+            return;
+          }
+          const body = xhr.response as ArrayBuffer | null;
+          if (!body) {
+            resolveOnce(null);
+            return;
+          }
+          resolveOnce(
+            new File([body], file.name.replace(/\.[^.]+$/, ".mp4"), {
+              type: "video/mp4",
+              lastModified: Date.now(),
+            }),
+          );
+        };
+        xhr.onerror = () => resolveOnce(null);
+        xhr.onabort = () => resolveOnce(null);
+        xhr.ontimeout = () => resolveOnce(null);
+
+        opts?.signal?.addEventListener("abort", () => xhr.abort(), {
+          once: true,
+        });
+
+        const body = new FormData();
+        body.append("file", file);
+        body.append("profile", profile);
+        if (mode === "async") body.append("async_job", "true");
+        xhr.send(body);
       };
-      // Upload finished; server is now working. Without backend-side
-      // progress reporting we can't know how long this takes — show an
-      // indeterminate "decoding" phase until the response body starts.
-      xhr.upload.onload = () => emit("decoding");
 
-      xhr.onprogress = (e) => {
-        emit(
-          "downloading",
-          e.lengthComputable ? e.loaded / e.total : undefined,
-        );
-      };
-
-      xhr.onload = () => {
-        const contentType = xhr.getResponseHeader("Content-Type") ?? "";
-        const isJson = contentType.includes("application/json");
-
-        // New async mode:
-        // POST /normalize/jobs => 202 { statusUrl, resultUrl }
-        // Keep legacy 200(video/mp4) path below.
-        if (xhr.status === 202 && isJson) {
-          void this.handleJobMode({
-            endpoint,
-            file,
-            xhr,
-            emit,
-            resolve: resolveOnce,
-            signal: opts?.signal,
-          });
-          return;
-        }
-
-        if (xhr.status < 200 || xhr.status >= 300) {
-          resolveOnce(null);
-          return;
-        }
-        const body = xhr.response as ArrayBuffer | null;
-        if (!body) {
-          resolveOnce(null);
-          return;
-        }
-        resolveOnce(
-          new File([body], file.name.replace(/\.[^.]+$/, ".mp4"), {
-            type: "video/mp4",
-            lastModified: Date.now(),
-          }),
-        );
-      };
-      xhr.onerror = () => resolveOnce(null);
-      xhr.onabort = () => resolveOnce(null);
-      xhr.ontimeout = () => resolveOnce(null);
-
-      opts?.signal?.addEventListener("abort", () => xhr.abort(), {
-        once: true,
-      });
-
-      const body = new FormData();
-      body.append("file", file);
-      xhr.send(body);
+      runRequest(asyncEndpoint, "async");
     });
   }
 
