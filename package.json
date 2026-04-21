@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "postinstall": "mkdir -p public/vendor/ffmpeg && cp node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js public/vendor/ffmpeg/ffmpeg-core.js && cp node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm public/vendor/ffmpeg/ffmpeg-core.wasm && cp node_modules/@ffmpeg/ffmpeg/dist/esm/worker.js public/vendor/ffmpeg/worker.js"
+    "postinstall": "mkdir -p public/vendor/ffmpeg && rm -rf public/vendor/ffmpeg/core public/vendor/ffmpeg/ffmpeg public/vendor/ffmpeg/util && cp -R node_modules/@ffmpeg/core/dist/esm public/vendor/ffmpeg/core && cp -R node_modules/@ffmpeg/ffmpeg/dist/esm public/vendor/ffmpeg/ffmpeg && cp -R node_modules/@ffmpeg/util/dist/esm public/vendor/ffmpeg/util"
   },
   "dependencies": {
     "@ffmpeg/core": "^0.12.10",
