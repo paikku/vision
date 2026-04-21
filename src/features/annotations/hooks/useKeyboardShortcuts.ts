@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useStore } from "@/lib/store";
+import { selectVisibleFrames, useStore } from "@/lib/store";
 import { TOOL_LIST } from "../tools/registry";
 import type { ClassShortcutKey, ToolId } from "../types";
 
@@ -77,18 +77,24 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // 3. Frame navigation (1 = previous, 2 = next)
+      // 3. Frame navigation (1 = previous, 2 = next) — scoped to the
+      // sorted+filtered strip so users step through exactly what they see.
       if (key === "1" || key === "2") {
-        const { frames, activeFrameId } = useStore.getState();
-        if (frames.length === 0) return;
-        const idx = frames.findIndex((f) => f.id === activeFrameId);
+        const state = useStore.getState();
+        const visible = selectVisibleFrames(state);
+        if (visible.length === 0) return;
+        const idx = visible.findIndex((f) => f.id === state.activeFrameId);
+        // If the active frame isn't in the visible set (e.g. just filtered
+        // out), fall back to the first visible frame so nav still works.
         const next =
-          key === "1"
-            ? Math.max(0, idx - 1)
-            : Math.min(frames.length - 1, idx + 1);
+          idx < 0
+            ? 0
+            : key === "1"
+              ? Math.max(0, idx - 1)
+              : Math.min(visible.length - 1, idx + 1);
         if (idx !== next) {
           e.preventDefault();
-          useStore.getState().setActiveFrame(frames[next].id);
+          state.setActiveFrame(visible[next].id);
         }
         return;
       }

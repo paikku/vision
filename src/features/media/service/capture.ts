@@ -1,6 +1,6 @@
 import type { Frame } from "@/features/frames/types";
 import type { MediaSource } from "../types";
-import { normalizeVideoFile } from "./normalize";
+import { normalizeVideoFile, type NormalizeOptions } from "./normalize";
 
 const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
@@ -22,7 +22,10 @@ export function inferMediaKind(file: File): "image" | "video" | null {
   return null;
 }
 
-export async function readMedia(file: File): Promise<MediaSource> {
+export async function readMedia(
+  file: File,
+  opts?: NormalizeOptions,
+): Promise<MediaSource> {
   const kind = inferMediaKind(file);
   if (!kind) throw new Error(`Unsupported file type: ${file.type || "unknown"}`);
 
@@ -42,7 +45,7 @@ export async function readMedia(file: File): Promise<MediaSource> {
     };
   }
 
-  const normalized = await normalizeVideoFile(file);
+  const normalized = await normalizeVideoFile(file, opts);
   const sourceFile = normalized.file;
   const url = URL.createObjectURL(sourceFile);
 

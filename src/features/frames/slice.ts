@@ -1,14 +1,21 @@
 import type { StateCreator } from "zustand";
 import type { Frame } from "./types";
 
+export type FrameSortOrder = "added" | "time";
+export type FrameFilterMode = "all" | "unlabeled";
+
 export type FramesSlice = {
   frames: Frame[];
   activeFrameId: string | null;
   keepZoomOnFrameChange: boolean;
   exceptedFrameIds: Record<string, boolean>;
+  frameSortOrder: FrameSortOrder;
+  frameFilterMode: FrameFilterMode;
   addFrames: (frames: Frame[]) => void;
   setKeepZoomOnFrameChange: (keep: boolean) => void;
   toggleFrameException: (id: string) => void;
+  setFrameSortOrder: (order: FrameSortOrder) => void;
+  setFrameFilterMode: (mode: FrameFilterMode) => void;
 };
 
 export const createFramesSlice: StateCreator<FramesSlice, [], [], FramesSlice> = (
@@ -18,6 +25,8 @@ export const createFramesSlice: StateCreator<FramesSlice, [], [], FramesSlice> =
   activeFrameId: null,
   keepZoomOnFrameChange: false,
   exceptedFrameIds: {},
+  frameSortOrder: "added",
+  frameFilterMode: "all",
 
   addFrames: (frames) =>
     set((s) => ({
@@ -36,4 +45,7 @@ export const createFramesSlice: StateCreator<FramesSlice, [], [], FramesSlice> =
           )
         : { ...s.exceptedFrameIds, [id]: true },
     })),
+
+  setFrameSortOrder: (frameSortOrder) => set({ frameSortOrder }),
+  setFrameFilterMode: (frameFilterMode) => set({ frameFilterMode }),
 });
