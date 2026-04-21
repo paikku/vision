@@ -23,13 +23,19 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
 
   async normalize(file: File): Promise<File | null> {
     const endpoint = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT;
-    if (!endpoint) return null;
+    if (!endpoint) {
+      console.warn(
+        "[normalize] NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT not set; skipping server adapter",
+      );
+      return null;
+    }
 
     const body = new FormData();
     body.append("file", file);
 
     let res: Response;
     try {
+      console.debug(`[normalize] POST ${endpoint} (${file.name}, ${file.size} bytes)`);
       res = await fetch(endpoint, { method: "POST", body });
     } catch (e) {
       console.warn("[normalize] server unreachable:", e);
@@ -129,13 +135,32 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
 }
 
 /**
- * Probe whether the browser can decode this file natively by loading its
- * metadata into a detached <video>. Resolves quickly for playable files and
- * times out for formats like AVI/MKV/WMV/FLV so we can route them through
- * the normalize pipeline.
+ * Extensions the browser can *decode* (not just parse headers for). AVI/MKV
+ * and friends are intentionally excluded: some browsers read their container
+ * header and fire `loadedmetadata` even when they cannot actually play the
+ * stream, which would cause us to skip normalization and fail later.
+ */
+const NATIVELY_PLAYABLE_EXTENSIONS = new Set([
+  "mp4", "m4v", "webm", "mov", "ogv", "ogg",
+]);
+
+function extOf(name: string): string {
+  const m = /\.([^.]+)$/.exec(name);
+  return m ? m[1].toLowerCase() : "";
+}
+
+/**
+ * Probe whether the browser can decode this file natively. Uses a positive
+ * extension whitelist first (so AVI etc. always route through normalize) then
+ * a short metadata-load probe to catch cases like H.265-in-MP4 that the
+ * browser can't decode.
  */
 function canBrowserPlay(file: File, timeoutMs = 1500): Promise<boolean> {
   if (typeof document === "undefined") return Promise.resolve(false);
+
+  const ext = extOf(file.name);
+  if (ext && !NATIVELY_PLAYABLE_EXTENSIONS.has(ext)) return Promise.resolve(false);
+
   if (file.type) {
     const probe = document.createElement("video");
     if (probe.canPlayType(file.type) === "") return Promise.resolve(false);
@@ -178,8 +203,13 @@ function canBrowserPlay(file: File, timeoutMs = 1500): Promise<boolean> {
 
 export async function normalizeVideoFile(file: File): Promise<NormalizeVideoResult> {
   if (await canBrowserPlay(file)) {
+    console.debug("[normalize] native playback ok, skipping adapters:", file.name);
     return { file, via: "original" };
   }
+
+  console.debug(
+    `[normalize] routing ${file.name} (${file.type || "unknown"}) through adapters`,
+  );
 
   const adapters: VideoNormalizeAdapter[] = [
     new ServerNormalizeAdapter(),
@@ -190,6 +220,7 @@ export async function normalizeVideoFile(file: File): Promise<NormalizeVideoResu
     try {
       const normalized = await adapter.normalize(file);
       if (!normalized) continue;
+      console.debug(`[normalize] ${adapter.name} succeeded`);
       return {
         file: normalized,
         via: adapter.name,
@@ -199,5 +230,6 @@ export async function normalizeVideoFile(file: File): Promise<NormalizeVideoResu
     }
   }
 
+  console.warn("[normalize] all adapters failed, returning original");
   return { file, via: "original" };
 }
