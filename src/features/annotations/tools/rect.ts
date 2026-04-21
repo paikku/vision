@@ -1,4 +1,5 @@
-import type { Point, RectShape } from "../types";
+import type { Point } from "@/shared/types";
+import type { RectShape } from "../types";
 import type { AnnotationTool } from "./types";
 
 const MIN_SIZE = 0.0005; // ~0.05% of frame on either axis

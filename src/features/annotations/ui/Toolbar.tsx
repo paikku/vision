@@ -1,8 +1,8 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { TOOL_LIST } from "@/lib/tools/registry";
-import type { ToolId } from "@/lib/types";
+import { TOOL_LIST } from "../tools/registry";
+import type { ToolId } from "../types";
 
 // Keyboard shortcuts for tools are handled by useKeyboardShortcuts (Workspace).
 

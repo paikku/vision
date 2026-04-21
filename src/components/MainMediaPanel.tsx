@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { useStore } from "@/lib/store";
-import { AnnotationStage } from "./AnnotationStage";
-import { VideoFramePicker } from "./VideoFramePicker";
+import { AnnotationStage } from "@/features/annotations";
+import { VideoFramePicker } from "@/features/media";
 
 export function MainMediaPanel() {
   const media = useStore((s) => s.media);

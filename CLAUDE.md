@@ -21,9 +21,31 @@ npm run lint       # next lint 기반 ESLint
 - 앱은 단일 페이지 라벨링 워크스페이스 구조이며, `app/page.tsx`에서 `<Workspace />`를 렌더링합니다.
 - 스토어에 `media`가 있으면 어노테이션 워크스페이스를, 없으면 업로드 화면을 표시합니다.
 
+### Feature 경계 (중요)
+
+코드는 feature 단위로 분리되어 있고, 경계는 ESLint `no-restricted-imports`로 강제됩니다.
+**경계 규칙 전체 스펙은 `/REFACTOR_RULES.md` 참고.** 작업 전 반드시 읽을 것.
+
+```text
+src/
+  components/           # shell · 여러 feature 조합하는 유일한 자리
+  features/
+    media/              # 업로드·normalize·비디오 재생·프레임 추출
+    frames/             # 프레임 목록·활성 프레임·exception
+    annotations/        # class·shape·tool·drawing·keyboard
+    export/             # 직렬화/다운로드
+  shared/               # 순수 유틸·범용 훅
+  lib/store.ts          # 슬라이스 합성 루트 (useStore 공개 API)
+```
+
+- 크로스 feature 로직은 **shell(components/) 또는 `lib/store.ts` composition root**에만.
+- Feature의 public 표면은 `features/<A>/index.ts` 배럴 + `types.ts`.
+- Service (`features/<A>/service/*`)는 외부 IO 전담, store 접근 금지.
+- 자세한 import 허용/금지 매트릭스는 `REFACTOR_RULES.md` §2.
+
 ### 데이터 흐름
 
-전체 상태는 `src/lib/store.ts`의 단일 Zustand store에서 관리합니다.
+전체 상태는 `src/lib/store.ts`의 Zustand store에서 관리합니다. 내부적으로 feature별 slice로 분리되어 있지만 공개 API(`useStore`)는 단일 지점입니다.
 
 ```text
 MediaSource → Frame[] → Annotation[]
@@ -47,7 +69,7 @@ MediaSource → Frame[] → Annotation[]
 
 ---
 
-## 3) 도구 시스템 (`src/lib/tools/`)
+## 3) 도구 시스템 (`src/features/annotations/tools/`)
 
 `tools/types.ts`의 `AnnotationTool` 인터페이스를 모든 그리기 모드가 구현합니다.
 
@@ -60,10 +82,10 @@ begin(start: Point): ShapeDraft
 현재 도구: `rect` (단축키 R), `MIN_SIZE = 0.0005`(~0.05% of frame)
 
 새 도구 추가 절차:
-1. `tools/` 하위에 `AnnotationTool` 구현
-2. `types.ts`의 `Shape` 유니온 확장
-3. `registry.ts` 등록
-4. `AnnotationStage.tsx`의 `ShapeView` 렌더 분기 추가
+1. `features/annotations/tools/` 하위에 `AnnotationTool` 구현
+2. `features/annotations/types.ts`의 `Shape` 유니온 확장
+3. `features/annotations/tools/registry.ts` 등록
+4. `features/annotations/ui/AnnotationStage.tsx`의 `ShapeView` 렌더 분기 추가
 
 ---
 
@@ -143,7 +165,7 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ---
 
-## 6) FrameStrip (`src/components/FrameStrip.tsx`)
+## 6) FrameStrip (`src/features/frames/ui/FrameStrip.tsx`)
 
 - **정렬**: 추가순 / 시간순(timestamp 기준)
 - **필터**: 전체 / 미라벨(annotation 0개 + `exceptedFrameIds`에 없는 frame)
@@ -153,11 +175,11 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ---
 
-## 7) LabelPanel (`src/components/LabelPanel.tsx`)
+## 7) LabelPanel (`src/features/annotations/ui/LabelPanel.tsx`)
 
 - **Class 관리**: 색상 클릭(color picker), 이름 인라인 편집, Q/W/E/R 단축키 할당
 - **Annotation 우클릭**: 컨텍스트 메뉴 → "일괄 적용…" → `BulkApplyModal`
-- **일괄 적용 모달** (`src/components/BulkApplyModal.tsx`):
+- **일괄 적용 모달** (`src/features/annotations/ui/BulkApplyModal.tsx`):
   - 전체 frame 썸네일(기본 전체 선택), 정렬/필터 컨트롤
   - 썸네일 우클릭 → 기준 frame 직전·직후 일괄 선택/해제
   - 적용 시 annotation의 shape/class를 선택된 frame에 복사
@@ -174,10 +196,10 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ## 9) 비디오 타임라인/프레임 추출 파이프라인
 
-`src/components/VideoFramePicker.tsx` 기준:
+`src/features/media/ui/VideoFramePicker.tsx` 기준:
 
 - **M1 (인프라)**: worker 기반 키프레임 탐색 + sprite 생성
-  - `src/lib/media.ts::buildVideoSprite`
+  - `src/features/media/service/capture.ts::buildVideoSprite`
   - `public/workers/sprite-worker.js` (MP4Box 파싱)
   - 실패 시 `evenlySpacedTimes(...)` 폴백
 - **M2 (타임라인 UI)**: 즉시 hover 프리뷰 + 클릭 seek
@@ -193,6 +215,6 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 - `MediaSource`는 `file?: File` 포함 (worker 전처리용)
 - sprite/object URL은 cleanup에서 revoke해 메모리 누수 방지
 - 무거운 작업은 worker/헬퍼 함수로 분리해 UI 인터랙션 블로킹 방지
-- 비디오 정규화 파이프라인(`src/lib/video-normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
+- 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
 - 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지)
-- 프레임 추출 컨트롤: `src/components/frame-extract/ExtractionPanel.tsx`
+- 프레임 추출 컨트롤: `src/features/media/ui/frame-extract/ExtractionPanel.tsx`

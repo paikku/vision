@@ -1,4 +1,5 @@
-import type { Point, Shape, ToolId } from "../types";
+import type { Point } from "@/shared/types";
+import type { Shape, ToolId } from "../types";
 
 /** Pluggable annotation tools. New tools (polygon, mask, ...) implement this. */
 export type AnnotationTool = {

@@ -1,5 +1,6 @@
-import type { Frame, MediaSource } from "./types";
-import { normalizeVideoFile } from "./video-normalize";
+import type { Frame } from "@/features/frames/types";
+import type { MediaSource } from "../types";
+import { normalizeVideoFile } from "./normalize";
 
 const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);

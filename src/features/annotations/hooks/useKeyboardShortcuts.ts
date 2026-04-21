@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { useStore } from "@/lib/store";
-import { TOOL_LIST } from "@/lib/tools/registry";
-import type { ClassShortcutKey, ToolId } from "@/lib/types";
+import { TOOL_LIST } from "../tools/registry";
+import type { ClassShortcutKey, ToolId } from "../types";
 
 const CLASS_KEYS = new Set<string>(["q", "w", "e", "r"]);
 
