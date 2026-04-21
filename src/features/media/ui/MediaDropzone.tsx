@@ -48,6 +48,7 @@ export function MediaDropzone() {
           addFrames([await frameFromImage(media)]);
         }
       } catch (e) {
+        console.error("[MediaDropzone] upload failed", e);
         setError(e instanceof Error ? e.message : "Failed to read file");
       } finally {
         setBusy(false);

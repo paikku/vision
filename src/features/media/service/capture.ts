@@ -78,7 +78,15 @@ export async function readMedia(
   } catch {
     URL.revokeObjectURL(url);
     const typeHint = file.type || "unknown";
-    throw new Error(`video metadata load failed (${typeHint})` + (normalized.via !== "original" ? ` after ${normalized.via}` : ""));
+    const message =
+      `video metadata load failed (${typeHint})` +
+      (normalized.via !== "original" ? ` after ${normalized.via}` : "");
+    console.error("[readMedia] metadata load failed", {
+      fileName: file.name,
+      fileType: typeHint,
+      ingestVia: normalized.via,
+    });
+    throw new Error(message);
   }
 }
 

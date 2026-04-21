@@ -47,7 +47,9 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
     body.append("file", file);
 
     const res = await fetch(endpoint, { method: "POST", body, signal: opts?.signal });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      throw new Error(`server normalize failed (${res.status})`);
+    }
 
     const blob = await res.blob();
     return new File([blob], file.name.replace(/\.[^.]+$/, ".mp4"), {
@@ -152,6 +154,7 @@ export async function normalizeVideoFile(
   opts?: NormalizeVideoOptions,
 ): Promise<NormalizeVideoResult> {
   opts?.onStatus?.("analyzing");
+  const failures: string[] = [];
   const shouldTranscode = await needsVideoTranscode(file, opts?.signal);
   if (!shouldTranscode) {
     opts?.onStatus?.("ready-original");
@@ -176,6 +179,7 @@ export async function normalizeVideoFile(
       };
     } catch (err) {
       if (isAbortError(err)) throw err;
+      failures.push(`${adapter.name}: ${formatError(err)}`);
       // try next adapter
     }
   }
@@ -184,9 +188,18 @@ export async function normalizeVideoFile(
     return { file, via: "original" };
   }
 
-  throw new Error(
-    "Video transcoding failed (server/ffmpeg unavailable), and the original video is not browser-playable.",
-  );
+  failures.push("original: not browser-playable");
+  const details = failures.length ? ` details=${failures.join(" | ")}` : "";
+  const message =
+    "Video transcoding failed (server/ffmpeg unavailable), and the original video is not browser-playable." +
+    details;
+  console.error("[normalizeVideoFile] failed", {
+    name: file.name,
+    type: file.type || "unknown",
+    size: file.size,
+    failures,
+  });
+  throw new Error(message);
 }
 
 const DEFAULT_CDN_CORE_URL =
@@ -293,6 +306,11 @@ function throwIfAborted(signal?: AbortSignal) {
 
 function isAbortError(err: unknown) {
   return err instanceof DOMException && err.name === "AbortError";
+}
+
+function formatError(err: unknown) {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 function clamp(value: number, lo: number, hi: number) {
