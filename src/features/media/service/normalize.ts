@@ -137,16 +137,19 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
     throwIfAborted(signal);
 
     const ffmpeg = new ffmpegMod.FFmpeg();
-    const coreURL =
-      process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ??
-      "/vendor/ffmpeg/ffmpeg-core.js";
-    const wasmURL =
-      process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ??
-      "/vendor/ffmpeg/ffmpeg-core.wasm";
-    await ffmpeg.load({
-      coreURL,
-      wasmURL,
-    });
+    const coreURL = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ?? DEFAULT_LOCAL_CORE_URL;
+    const wasmURL = process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ?? DEFAULT_LOCAL_WASM_URL;
+    try {
+      await ffmpeg.load({
+        coreURL,
+        wasmURL,
+      });
+    } catch {
+      await ffmpeg.load({
+        coreURL: DEFAULT_CDN_CORE_URL,
+        wasmURL: DEFAULT_CDN_WASM_URL,
+      });
+    }
     throwIfAborted(signal);
 
     this.ffmpeg = ffmpeg;
@@ -187,8 +190,21 @@ export async function normalizeVideoFile(
     }
   }
 
-  return { file, via: "original" };
+  if (await canBrowserPlay(file, opts?.signal)) {
+    return { file, via: "original" };
+  }
+
+  throw new Error(
+    "Video transcoding failed (server/ffmpeg unavailable), and the original video is not browser-playable.",
+  );
 }
+
+const DEFAULT_LOCAL_CORE_URL = "/vendor/ffmpeg/ffmpeg-core.js";
+const DEFAULT_LOCAL_WASM_URL = "/vendor/ffmpeg/ffmpeg-core.wasm";
+const DEFAULT_CDN_CORE_URL =
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+const DEFAULT_CDN_WASM_URL =
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm";
 
 async function needsVideoTranscode(file: File, signal?: AbortSignal): Promise<boolean> {
   if (!file.type.startsWith("video/")) return false;
