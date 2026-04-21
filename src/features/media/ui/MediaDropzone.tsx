@@ -15,6 +15,8 @@ export function MediaDropzone() {
   const [hover, setHover] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [normalizeStatus, setNormalizeStatus] = useState<string | null>(null);
+  const [normalizeProgress, setNormalizeProgress] = useState<number | null>(null);
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
@@ -26,8 +28,21 @@ export function MediaDropzone() {
       }
       setError(null);
       setBusy(true);
+      setNormalizeStatus("Analyzing video compatibility…");
+      setNormalizeProgress(null);
       try {
-        const media = await readMedia(file);
+        const media = await readMedia(file, {
+          onNormalizeStatus: (status) => {
+            if (status === "analyzing") setNormalizeStatus("Analyzing video compatibility…");
+            if (status === "ready-original") setNormalizeStatus("Ready without transcoding.");
+            if (status === "transcoding-server") setNormalizeStatus("Transcoding via server…");
+            if (status === "transcoding-ffmpeg")
+              setNormalizeStatus("Transcoding in browser (ffmpeg)…");
+          },
+          onNormalizeProgress: (ratio) => {
+            setNormalizeProgress(Math.round(ratio * 100));
+          },
+        });
         setMedia(media);
         if (media.kind === "image") {
           addFrames([await frameFromImage(media)]);
@@ -69,8 +84,14 @@ export function MediaDropzone() {
             {busy ? "Reading file…" : "Drop an image or video"}
           </p>
           <p className="mt-1 text-sm text-[var(--color-muted)]">
-            or click to browse · jpg, png, webp, mp4, webm, mov
+            or click to browse · jpg, png, webp, mp4, webm, mov, avi, mkv
           </p>
+          {busy && normalizeStatus && (
+            <p className="mt-2 text-xs text-[var(--color-muted)]">
+              {normalizeStatus}
+              {normalizeProgress !== null ? ` (${normalizeProgress}%)` : ""}
+            </p>
+          )}
         </div>
         {error && (
           <p className="text-sm text-[var(--color-danger)]">{error}</p>
