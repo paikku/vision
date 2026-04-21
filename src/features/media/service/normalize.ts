@@ -30,15 +30,17 @@ type FfmpegInstance = {
 };
 
 type FfmpegModule = { FFmpeg: new () => FfmpegInstance };
-type FfmpegUtilModule = { fetchFile: (file: File) => Promise<Uint8Array> };
+type FfmpegUtilModule = {
+  fetchFile: (file: File) => Promise<Uint8Array>;
+  toBlobURL?: (url: string, mimeType: string) => Promise<string>;
+};
 
 class ServerNormalizeAdapter implements VideoNormalizeAdapter {
   name = "server" as const;
 
   async normalize(file: File, opts?: NormalizeVideoOptions): Promise<File | null> {
     throwIfAborted(opts?.signal);
-    const endpoint = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT;
-    if (!endpoint) return null;
+    const endpoint = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT ?? "/api/normalize";
 
     const body = new FormData();
     body.append("file", file);
@@ -139,17 +141,12 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
     const ffmpeg = new ffmpegMod.FFmpeg();
     const coreURL = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ?? DEFAULT_LOCAL_CORE_URL;
     const wasmURL = process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ?? DEFAULT_LOCAL_WASM_URL;
-    try {
-      await ffmpeg.load({
-        coreURL,
-        wasmURL,
-      });
-    } catch {
-      await ffmpeg.load({
-        coreURL: DEFAULT_CDN_CORE_URL,
-        wasmURL: DEFAULT_CDN_WASM_URL,
-      });
-    }
+    const resolved = await resolveCoreUrls({
+      utilMod,
+      primary: { coreURL, wasmURL },
+      fallback: { coreURL: DEFAULT_CDN_CORE_URL, wasmURL: DEFAULT_CDN_WASM_URL },
+    });
+    await ffmpeg.load(resolved);
     throwIfAborted(signal);
 
     this.ffmpeg = ffmpeg;
@@ -205,6 +202,37 @@ const DEFAULT_CDN_CORE_URL =
   "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
 const DEFAULT_CDN_WASM_URL =
   "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm";
+
+async function resolveCoreUrls({
+  utilMod,
+  primary,
+  fallback,
+}: {
+  utilMod: FfmpegUtilModule;
+  primary: { coreURL: string; wasmURL: string };
+  fallback: { coreURL: string; wasmURL: string };
+}): Promise<{ coreURL: string; wasmURL: string }> {
+  if (!utilMod.toBlobURL) {
+    try {
+      await fetch(primary.coreURL, { method: "HEAD" });
+      return primary;
+    } catch {
+      return fallback;
+    }
+  }
+
+  try {
+    return {
+      coreURL: await utilMod.toBlobURL(primary.coreURL, "text/javascript"),
+      wasmURL: await utilMod.toBlobURL(primary.wasmURL, "application/wasm"),
+    };
+  } catch {
+    return {
+      coreURL: await utilMod.toBlobURL(fallback.coreURL, "text/javascript"),
+      wasmURL: await utilMod.toBlobURL(fallback.wasmURL, "application/wasm"),
+    };
+  }
+}
 
 async function needsVideoTranscode(file: File, signal?: AbortSignal): Promise<boolean> {
   if (!file.type.startsWith("video/")) return false;
