@@ -1,97 +1,43 @@
 "use client";
 
 import { create } from "zustand";
-import type {
-  Annotation,
-  ClassShortcutKey,
-  Frame,
-  LabelClass,
-  MediaSource,
-  ToolId,
-} from "./types";
+import {
+  type AnnotationsSlice,
+  createAnnotationsSlice,
+} from "@/features/annotations/slice";
+import { exportJson as exportJsonImpl } from "@/features/export/service/exportJson";
+import {
+  type FramesSlice,
+  createFramesSlice,
+} from "@/features/frames/slice";
+import {
+  type MediaSlice,
+  createMediaSlice,
+} from "@/features/media/slice";
+import type { MediaSource } from "@/features/media/types";
 
-const PALETTE = [
-  "#5b8cff",
-  "#ffb35b",
-  "#5bff9c",
-  "#ff5bd1",
-  "#ffe45b",
-  "#5bf2ff",
-  "#a35bff",
-  "#ff8a5b",
-];
+/**
+ * Composition root for the workspace store.
+ *
+ * Each feature owns a slice (state + intra-feature actions). Cross-slice
+ * transitions — object URL teardown, cascading deletes, global reset — live
+ * here, in one place, so a future event bus can replace this block without
+ * touching features.
+ */
+export type StoreState = MediaSlice &
+  FramesSlice &
+  AnnotationsSlice & {
+    setMedia: (m: MediaSource | null) => void;
+    setActiveFrame: (id: string | null) => void;
+    removeFrame: (id: string) => void;
+    reset: () => void;
+    exportJson: () => string;
+  };
 
-const uid = () =>
-  globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
-
-type StoreState = {
-  media: MediaSource | null;
-  frames: Frame[];
-  activeFrameId: string | null;
-
-  classes: LabelClass[];
-  activeClassId: string | null;
-
-  annotations: Annotation[];
-  selectedAnnotationId: string | null;
-  hoveredAnnotationId: string | null;
-
-  activeToolId: ToolId;
-  centerViewMode: "video" | "frame";
-  keepZoomOnFrameChange: boolean;
-  interactionMode: "draw" | "edit";
-  exceptedFrameIds: Record<string, boolean>;
-
-  // media + frames
-  setMedia: (m: MediaSource | null) => void;
-  addFrames: (frames: Frame[]) => void;
-  removeFrame: (id: string) => void;
-  setActiveFrame: (id: string | null) => void;
-  setCenterViewMode: (mode: "video" | "frame") => void;
-  setKeepZoomOnFrameChange: (keep: boolean) => void;
-  toggleFrameException: (id: string) => void;
-
-  // classes
-  addClass: (name?: string) => LabelClass;
-  removeClass: (id: string) => void;
-  renameClass: (id: string, name: string) => void;
-  setActiveClass: (id: string | null) => void;
-  setClassColor: (classId: string, color: string) => void;
-  setClassShortcut: (classId: string, key: ClassShortcutKey | null) => void;
-
-  // annotations
-  addAnnotation: (a: Omit<Annotation, "id" | "createdAt">) => Annotation;
-  updateAnnotation: (id: string, patch: Partial<Annotation>) => void;
-  removeAnnotation: (id: string) => void;
-  selectAnnotation: (id: string | null) => void;
-  setHoveredAnnotation: (id: string | null) => void;
-
-  // tool
-  setActiveTool: (id: ToolId) => void;
-  setInteractionMode: (mode: "draw" | "edit") => void;
-
-  // utility
-  reset: () => void;
-  exportJson: () => string;
-};
-
-export const useStore = create<StoreState>((set, get) => ({
-  media: null,
-  frames: [],
-  activeFrameId: null,
-
-  classes: [{ id: "default", name: "object", color: PALETTE[0] }],
-  activeClassId: "default",
-
-  annotations: [],
-  selectedAnnotationId: null,
-  hoveredAnnotationId: null,
-
-  activeToolId: "rect",
-  centerViewMode: "video",
-  keepZoomOnFrameChange: false,
-  interactionMode: "draw",
-  exceptedFrameIds: {},
+export const useStore = create<StoreState>()((set, get, store) => ({
+  ...createMediaSlice(set, get, store),
+  ...createFramesSlice(set, get, store),
+  ...createAnnotationsSlice(set, get, store),
 
   setMedia: (media) => {
     const prev = get().media;
@@ -108,25 +54,6 @@ export const useStore = create<StoreState>((set, get) => ({
     });
   },
 
-  addFrames: (frames) => {
-    set((s) => ({
-      frames: [...s.frames, ...frames],
-      activeFrameId: s.activeFrameId ?? frames[0]?.id ?? null,
-    }));
-  },
-
-  removeFrame: (id) => {
-    set((s) => {
-      const target = s.frames.find((f) => f.id === id);
-      if (target) URL.revokeObjectURL(target.url);
-      const frames = s.frames.filter((f) => f.id !== id);
-      const annotations = s.annotations.filter((a) => a.frameId !== id);
-      const activeFrameId =
-        s.activeFrameId === id ? (frames[0]?.id ?? null) : s.activeFrameId;
-      return { frames, annotations, activeFrameId };
-    });
-  },
-
   setActiveFrame: (id) =>
     set({
       activeFrameId: id,
@@ -135,88 +62,16 @@ export const useStore = create<StoreState>((set, get) => ({
       centerViewMode: id ? "frame" : get().centerViewMode,
     }),
 
-  setCenterViewMode: (mode) => set({ centerViewMode: mode }),
-  setKeepZoomOnFrameChange: (keepZoomOnFrameChange) => set({ keepZoomOnFrameChange }),
-  toggleFrameException: (id) =>
-    set((s) => ({
-      exceptedFrameIds: s.exceptedFrameIds[id]
-        ? Object.fromEntries(Object.entries(s.exceptedFrameIds).filter(([k]) => k !== id))
-        : { ...s.exceptedFrameIds, [id]: true },
-    })),
-
-  addClass: (name) => {
-    const c: LabelClass = {
-      id: uid(),
-      name: name?.trim() || `class ${get().classes.length + 1}`,
-      color: PALETTE[get().classes.length % PALETTE.length],
-    };
-    set((s) => ({ classes: [...s.classes, c], activeClassId: c.id }));
-    return c;
+  removeFrame: (id) => {
+    const s = get();
+    const target = s.frames.find((f) => f.id === id);
+    if (target) URL.revokeObjectURL(target.url);
+    const frames = s.frames.filter((f) => f.id !== id);
+    const annotations = s.annotations.filter((a) => a.frameId !== id);
+    const activeFrameId =
+      s.activeFrameId === id ? (frames[0]?.id ?? null) : s.activeFrameId;
+    set({ frames, annotations, activeFrameId });
   },
-
-  removeClass: (id) => {
-    set((s) => {
-      const classes = s.classes.filter((c) => c.id !== id);
-      const annotations = s.annotations.filter((a) => a.classId !== id);
-      const activeClassId =
-        s.activeClassId === id ? (classes[0]?.id ?? null) : s.activeClassId;
-      return { classes, annotations, activeClassId };
-    });
-  },
-
-  renameClass: (id, name) =>
-    set((s) => ({
-      classes: s.classes.map((c) => (c.id === id ? { ...c, name } : c)),
-    })),
-
-  setClassColor: (classId, color) =>
-    set((s) => ({
-      classes: s.classes.map((c) => (c.id === classId ? { ...c, color } : c)),
-    })),
-
-  setActiveClass: (id) => set({ activeClassId: id }),
-
-  setClassShortcut: (classId, key) =>
-    set((s) => ({
-      classes: s.classes.map((c) => ({
-        ...c,
-        shortcutKey:
-          c.id === classId
-            ? (key ?? undefined)
-            : c.shortcutKey === key
-              ? undefined // remove from previous holder
-              : c.shortcutKey,
-      })),
-    })),
-
-  addAnnotation: (a) => {
-    const ann: Annotation = { id: uid(), createdAt: Date.now(), ...a };
-    set((s) => ({
-      annotations: [...s.annotations, ann],
-      selectedAnnotationId: ann.id,
-    }));
-    return ann;
-  },
-
-  updateAnnotation: (id, patch) =>
-    set((s) => ({
-      annotations: s.annotations.map((a) =>
-        a.id === id ? { ...a, ...patch } : a,
-      ),
-    })),
-
-  removeAnnotation: (id) =>
-    set((s) => ({
-      annotations: s.annotations.filter((a) => a.id !== id),
-      selectedAnnotationId:
-        s.selectedAnnotationId === id ? null : s.selectedAnnotationId,
-    })),
-
-  selectAnnotation: (id) => set({ selectedAnnotationId: id }),
-  setHoveredAnnotation: (id) => set({ hoveredAnnotationId: id }),
-
-  setActiveTool: (id) => set({ activeToolId: id }),
-  setInteractionMode: (interactionMode) => set({ interactionMode }),
 
   reset: () => {
     const s = get();
@@ -237,28 +92,6 @@ export const useStore = create<StoreState>((set, get) => ({
 
   exportJson: () => {
     const { media, frames, classes, annotations } = get();
-    const payload = {
-      version: 1,
-      media: media
-        ? {
-            id: media.id,
-            kind: media.kind,
-            name: media.name,
-            width: media.width,
-            height: media.height,
-            duration: media.duration,
-          }
-        : null,
-      classes,
-      frames: frames.map((f) => ({
-        id: f.id,
-        width: f.width,
-        height: f.height,
-        timestamp: f.timestamp,
-        label: f.label,
-      })),
-      annotations,
-    };
-    return JSON.stringify(payload, null, 2);
+    return exportJsonImpl({ media, frames, classes, annotations });
   },
 }));

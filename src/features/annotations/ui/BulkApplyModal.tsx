@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Annotation, Frame, LabelClass } from "@/lib/types";
+import type { Frame } from "@/features/frames/types";
+import type { Annotation, LabelClass } from "../types";
 
 type SortOrder = "added" | "time";
 type FilterMode = "all" | "unlabeled";

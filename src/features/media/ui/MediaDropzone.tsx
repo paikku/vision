@@ -2,7 +2,11 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { frameFromImage, inferMediaKind, readMedia } from "@/lib/media";
+import {
+  frameFromImage,
+  inferMediaKind,
+  readMedia,
+} from "../service/capture";
 
 export function MediaDropzone() {
   const setMedia = useStore((s) => s.setMedia);

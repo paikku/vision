@@ -1,3 +1,127 @@
 {
-  "extends": ["next/core-web-vitals", "next/typescript"]
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "overrides": [
+    {
+      "files": ["src/features/media/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/features/frames/ui/**",
+                  "@/features/frames/slice",
+                  "@/features/frames/service/**",
+                  "@/features/frames/tools/**",
+                  "@/features/frames/hooks/**",
+                  "@/features/annotations/ui/**",
+                  "@/features/annotations/slice",
+                  "@/features/annotations/service/**",
+                  "@/features/annotations/tools/**",
+                  "@/features/annotations/hooks/**",
+                  "@/features/export/ui/**",
+                  "@/features/export/slice",
+                  "@/features/export/service/**"
+                ],
+                "message": "Cross-feature deep import forbidden. Use feature barrel (@/features/<name>) or shared types only. See REFACTOR_RULES.md §2."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/features/frames/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/features/media/ui/**",
+                  "@/features/media/slice",
+                  "@/features/media/service/**",
+                  "@/features/media/tools/**",
+                  "@/features/media/hooks/**",
+                  "@/features/annotations/ui/**",
+                  "@/features/annotations/slice",
+                  "@/features/annotations/service/**",
+                  "@/features/annotations/tools/**",
+                  "@/features/annotations/hooks/**",
+                  "@/features/export/ui/**",
+                  "@/features/export/slice",
+                  "@/features/export/service/**"
+                ],
+                "message": "Cross-feature deep import forbidden. Use feature barrel (@/features/<name>) or shared types only. See REFACTOR_RULES.md §2."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/features/annotations/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/features/media/ui/**",
+                  "@/features/media/slice",
+                  "@/features/media/service/**",
+                  "@/features/media/tools/**",
+                  "@/features/media/hooks/**",
+                  "@/features/frames/ui/**",
+                  "@/features/frames/slice",
+                  "@/features/frames/service/**",
+                  "@/features/frames/tools/**",
+                  "@/features/frames/hooks/**",
+                  "@/features/export/ui/**",
+                  "@/features/export/slice",
+                  "@/features/export/service/**"
+                ],
+                "message": "Cross-feature deep import forbidden. Use feature barrel (@/features/<name>) or shared types only. See REFACTOR_RULES.md §2."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/features/export/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/features/media/ui/**",
+                  "@/features/media/slice",
+                  "@/features/media/service/**",
+                  "@/features/media/tools/**",
+                  "@/features/media/hooks/**",
+                  "@/features/frames/ui/**",
+                  "@/features/frames/slice",
+                  "@/features/frames/service/**",
+                  "@/features/frames/tools/**",
+                  "@/features/frames/hooks/**",
+                  "@/features/annotations/ui/**",
+                  "@/features/annotations/slice",
+                  "@/features/annotations/service/**",
+                  "@/features/annotations/tools/**",
+                  "@/features/annotations/hooks/**"
+                ],
+                "message": "Cross-feature deep import forbidden. Use feature barrel (@/features/<name>) or shared types only. See REFACTOR_RULES.md §2."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

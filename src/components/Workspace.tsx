@@ -2,12 +2,9 @@
 
 import { useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { FrameStrip } from "./FrameStrip";
-import { LabelPanel } from "./LabelPanel";
-import { MediaDropzone } from "./MediaDropzone";
-import { Toolbar } from "./Toolbar";
-import { TopBar } from "./TopBar";
+import { LabelPanel, Toolbar, useKeyboardShortcuts } from "@/features/annotations";
+import { FrameStrip } from "@/features/frames";
+import { MediaDropzone, TopBar } from "@/features/media";
 import { MainMediaPanel } from "./MainMediaPanel";
 
 export function Workspace() {

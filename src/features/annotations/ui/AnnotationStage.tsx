@@ -8,10 +8,10 @@ import {
   useState,
 } from "react";
 import { useStore } from "@/lib/store";
-import { TOOLS } from "@/lib/tools/registry";
-import { useDrawingTool } from "@/hooks/useDrawingTool";
-import { useStageTransform } from "@/hooks/useStageTransform";
-import type { LabelClass, Shape } from "@/lib/types";
+import { useStageTransform } from "@/shared/hooks/useStageTransform";
+import { useDrawingTool } from "../hooks/useDrawingTool";
+import { TOOLS } from "../tools/registry";
+import type { LabelClass, Shape } from "../types";
 
 type FitRect = { left: number; top: number; width: number; height: number };
 

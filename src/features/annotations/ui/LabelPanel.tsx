@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { BulkApplyModal } from "./BulkApplyModal";
-import type { ClassShortcutKey } from "@/lib/types";
+import type { ClassShortcutKey } from "../types";
 
 const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
 const REMOVE_KEYS = new Set(["d"]);

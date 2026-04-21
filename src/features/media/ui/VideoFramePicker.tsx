@@ -9,7 +9,7 @@ import {
   extractFrames,
   formatTime,
   type VideoSprite,
-} from "@/lib/media";
+} from "../service/capture";
 import { ExtractionPanel } from "./frame-extract/ExtractionPanel";
 
 export function VideoFramePicker() {

@@ -8,9 +8,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { TOOLS } from "@/lib/tools/registry";
-import type { ShapeDraft } from "@/lib/tools/types";
-import type { Frame, Point, Shape, ToolId } from "@/lib/types";
+import type { Frame } from "@/features/frames/types";
+import type { Point } from "@/shared/types";
+import { TOOLS } from "../tools/registry";
+import type { ShapeDraft } from "../tools/types";
+import type { Shape, ToolId } from "../types";
 
 type DrawingToolOptions = {
   stageRef: RefObject<HTMLDivElement | null>;
