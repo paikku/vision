@@ -24,7 +24,11 @@ type FfmpegInstance = {
   writeFile: (path: string, data: Uint8Array) => Promise<void>;
   exec: (args: string[]) => Promise<void>;
   readFile: (path: string) => Promise<Uint8Array | ArrayBuffer>;
-  load: (config: { coreURL: string; wasmURL: string }) => Promise<void>;
+  load: (config: {
+    coreURL: string;
+    wasmURL: string;
+    workerURL?: string;
+  }) => Promise<void>;
   on?: (event: "progress", cb: (payload: { progress: number }) => void) => void;
   off?: (event: "progress", cb: (payload: { progress: number }) => void) => void;
 };
@@ -136,10 +140,15 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
     const ffmpeg = new ffmpegMod.FFmpeg();
     const coreURL = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ?? DEFAULT_CDN_CORE_URL;
     const wasmURL = process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ?? DEFAULT_CDN_WASM_URL;
+    const workerURL = process.env.NEXT_PUBLIC_FFMPEG_WORKER_URL ?? DEFAULT_CDN_WORKER_URL;
     const resolved = await resolveCoreUrls({
       utilMod,
-      primary: { coreURL, wasmURL },
-      fallback: { coreURL: DEFAULT_CDN_CORE_URL, wasmURL: DEFAULT_CDN_WASM_URL },
+      primary: { coreURL, wasmURL, workerURL },
+      fallback: {
+        coreURL: DEFAULT_CDN_CORE_URL,
+        wasmURL: DEFAULT_CDN_WASM_URL,
+        workerURL: DEFAULT_CDN_WORKER_URL,
+      },
     });
     await ffmpeg.load(resolved);
     throwIfAborted(signal);
@@ -206,6 +215,8 @@ const DEFAULT_CDN_CORE_URL =
   "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
 const DEFAULT_CDN_WASM_URL =
   "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm";
+const DEFAULT_CDN_WORKER_URL =
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js";
 
 async function resolveCoreUrls({
   utilMod,
@@ -213,9 +224,9 @@ async function resolveCoreUrls({
   fallback,
 }: {
   utilMod: FfmpegUtilModule;
-  primary: { coreURL: string; wasmURL: string };
-  fallback: { coreURL: string; wasmURL: string };
-}): Promise<{ coreURL: string; wasmURL: string }> {
+  primary: { coreURL: string; wasmURL: string; workerURL: string };
+  fallback: { coreURL: string; wasmURL: string; workerURL: string };
+}): Promise<{ coreURL: string; wasmURL: string; workerURL: string }> {
   if (!utilMod.toBlobURL) {
     try {
       await fetch(primary.coreURL, { method: "HEAD" });
@@ -229,11 +240,13 @@ async function resolveCoreUrls({
     return {
       coreURL: await utilMod.toBlobURL(primary.coreURL, "text/javascript"),
       wasmURL: await utilMod.toBlobURL(primary.wasmURL, "application/wasm"),
+      workerURL: await utilMod.toBlobURL(primary.workerURL, "text/javascript"),
     };
   } catch {
     return {
       coreURL: await utilMod.toBlobURL(fallback.coreURL, "text/javascript"),
       wasmURL: await utilMod.toBlobURL(fallback.wasmURL, "application/wasm"),
+      workerURL: await utilMod.toBlobURL(fallback.workerURL, "text/javascript"),
     };
   }
 }
