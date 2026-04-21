@@ -203,18 +203,28 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
           return;
         }
         const statusData = (await statusResp.json()) as {
-          status?: "queued" | "decoding" | "ready" | "failed";
-          state?: "queued" | "decoding" | "ready" | "failed";
+          status?: "queued" | "processing" | "decoding" | "done" | "ready" | "failed";
+          state?: "queued" | "processing" | "decoding" | "done" | "ready" | "failed";
           progress?: number;
         };
-        const state = statusData.status ?? statusData.state;
+        const rawState = statusData.status ?? statusData.state;
+        const state =
+          rawState === "processing"
+            ? "decoding"
+            : rawState === "done"
+              ? "ready"
+              : rawState;
         if (state === "failed") {
           resolve(null);
           return;
         }
         if (state === "ready") break;
 
-        emit("decoding", typeof statusData.progress === "number" ? statusData.progress : undefined);
+        const normalizedProgress =
+          typeof statusData.progress === "number"
+            ? Math.max(0, Math.min(1, statusData.progress > 1 ? statusData.progress / 100 : statusData.progress))
+            : undefined;
+        emit("decoding", normalizedProgress);
         await new Promise<void>((r) => setTimeout(r, 1000));
       }
 
