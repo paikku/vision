@@ -121,27 +121,19 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
 
     const importModule = (moduleId: string) =>
       Function("m", "return import(m)")(moduleId) as Promise<unknown>;
-
-    let ffmpegMod: FfmpegModule;
-    let utilMod: FfmpegUtilModule;
-    try {
-      ffmpegMod = (await importModule("@ffmpeg/ffmpeg")) as FfmpegModule;
-      utilMod = (await importModule("@ffmpeg/util")) as FfmpegUtilModule;
-    } catch {
-      const ffmpegModuleUrl =
-        process.env.NEXT_PUBLIC_FFMPEG_MODULE_URL ??
-        "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
-      const ffmpegUtilUrl =
-        process.env.NEXT_PUBLIC_FFMPEG_UTIL_URL ??
-        "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js";
-      ffmpegMod = (await importModule(ffmpegModuleUrl)) as FfmpegModule;
-      utilMod = (await importModule(ffmpegUtilUrl)) as FfmpegUtilModule;
-    }
+    const ffmpegModuleUrl =
+      process.env.NEXT_PUBLIC_FFMPEG_MODULE_URL ??
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
+    const ffmpegUtilUrl =
+      process.env.NEXT_PUBLIC_FFMPEG_UTIL_URL ??
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js";
+    const ffmpegMod = (await importModule(ffmpegModuleUrl)) as FfmpegModule;
+    const utilMod = (await importModule(ffmpegUtilUrl)) as FfmpegUtilModule;
     throwIfAborted(signal);
 
     const ffmpeg = new ffmpegMod.FFmpeg();
-    const coreURL = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ?? DEFAULT_LOCAL_CORE_URL;
-    const wasmURL = process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ?? DEFAULT_LOCAL_WASM_URL;
+    const coreURL = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ?? DEFAULT_CDN_CORE_URL;
+    const wasmURL = process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ?? DEFAULT_CDN_WASM_URL;
     const resolved = await resolveCoreUrls({
       utilMod,
       primary: { coreURL, wasmURL },
@@ -197,8 +189,6 @@ export async function normalizeVideoFile(
   );
 }
 
-const DEFAULT_LOCAL_CORE_URL = "/vendor/ffmpeg/ffmpeg-core.js";
-const DEFAULT_LOCAL_WASM_URL = "/vendor/ffmpeg/ffmpeg-core.wasm";
 const DEFAULT_CDN_CORE_URL =
   "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
 const DEFAULT_CDN_WASM_URL =
