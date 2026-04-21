@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useStore } from "@/lib/store";
-
-type SortOrder = "added" | "time";
-type FilterMode = "all" | "unlabeled";
+import { useEffect, useMemo, useRef } from "react";
+import { selectVisibleFrames, useStore } from "@/lib/store";
+import type { FrameFilterMode, FrameSortOrder } from "../slice";
 
 export function FrameStrip() {
   const frames = useStore((s) => s.frames);
@@ -15,9 +13,10 @@ export function FrameStrip() {
   const classes = useStore((s) => s.classes);
   const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
   const toggleFrameException = useStore((s) => s.toggleFrameException);
-
-  const [sort, setSort] = useState<SortOrder>("added");
-  const [filter, setFilter] = useState<FilterMode>("all");
+  const sort = useStore((s) => s.frameSortOrder);
+  const filter = useStore((s) => s.frameFilterMode);
+  const setSort = useStore((s) => s.setFrameSortOrder);
+  const setFilter = useStore((s) => s.setFrameFilterMode);
   const listRef = useRef<HTMLUListElement>(null);
 
   // annotation count per frame
@@ -40,18 +39,21 @@ export function FrameStrip() {
     return map;
   }, [annotations]);
 
-  const sorted = useMemo(() => {
-    const list = [...frames];
-    if (sort === "time") {
-      list.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-    }
-    return list;
-  }, [frames, sort]);
-
-  const filtered = useMemo(() => {
-    if (filter === "all") return sorted;
-    return sorted.filter((f) => (counts.get(f.id) ?? 0) === 0 && !exceptedFrameIds[f.id]);
-  }, [sorted, filter, counts, exceptedFrameIds]);
+  // Visible list mirrors what `useKeyboardShortcuts` uses for 1/2 nav, so
+  // keyboard stepping and the strip always agree on the current slice.
+  // Compute via useMemo rather than a zustand selector because the selector
+  // returns a new array each call, which would thrash referential equality.
+  const filtered = useMemo(
+    () =>
+      selectVisibleFrames({
+        frames,
+        annotations,
+        exceptedFrameIds,
+        frameSortOrder: sort,
+        frameFilterMode: filter,
+      }),
+    [frames, annotations, exceptedFrameIds, sort, filter],
+  );
 
   // Scroll active frame into view when selection changes.
   useEffect(() => {
@@ -74,7 +76,7 @@ export function FrameStrip() {
       <div className="flex shrink-0 flex-col gap-1 border-b border-[var(--color-line)] px-2 py-1.5">
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-[var(--color-muted)] w-8 shrink-0">정렬</span>
-          {(["added", "time"] as SortOrder[]).map((s) => (
+          {(["added", "time"] as FrameSortOrder[]).map((s) => (
             <button
               key={s}
               type="button"
@@ -92,7 +94,7 @@ export function FrameStrip() {
         </div>
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-[var(--color-muted)] w-8 shrink-0">필터</span>
-          {(["all", "unlabeled"] as FilterMode[]).map((f) => (
+          {(["all", "unlabeled"] as FrameFilterMode[]).map((f) => (
             <button
               key={f}
               type="button"

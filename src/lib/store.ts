@@ -10,6 +10,7 @@ import {
   type FramesSlice,
   createFramesSlice,
 } from "@/features/frames/slice";
+import type { Frame } from "@/features/frames/types";
 import {
   type MediaSlice,
   createMediaSlice,
@@ -95,3 +96,40 @@ export const useStore = create<StoreState>()((set, get, store) => ({
     return exportJsonImpl({ media, frames, classes, annotations });
   },
 }));
+
+/**
+ * Cross-slice selector: frames as currently sorted + filtered in the strip.
+ * Lives in the composition root because it joins frames, annotations,
+ * and exceptedFrameIds. Accepts a structural subset so callers can pass
+ * `useStore.getState()` directly or memoize over the specific inputs.
+ */
+export function selectVisibleFrames(state: {
+  frames: StoreState["frames"];
+  annotations: StoreState["annotations"];
+  exceptedFrameIds: StoreState["exceptedFrameIds"];
+  frameSortOrder: StoreState["frameSortOrder"];
+  frameFilterMode: StoreState["frameFilterMode"];
+}): Frame[] {
+  const {
+    frames,
+    annotations,
+    exceptedFrameIds,
+    frameSortOrder,
+    frameFilterMode,
+  } = state;
+
+  const sorted =
+    frameSortOrder === "time"
+      ? [...frames].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+      : frames;
+
+  if (frameFilterMode === "all") return sorted;
+
+  const counts = new Map<string, number>();
+  for (const a of annotations) {
+    counts.set(a.frameId, (counts.get(a.frameId) ?? 0) + 1);
+  }
+  return sorted.filter(
+    (f) => (counts.get(f.id) ?? 0) === 0 && !exceptedFrameIds[f.id],
+  );
+}
