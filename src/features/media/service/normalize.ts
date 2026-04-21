@@ -127,27 +127,29 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
 
     const importModule = (moduleId: string) =>
       Function("m", "return import(m)")(moduleId) as Promise<unknown>;
-    const ffmpegModuleUrl =
-      process.env.NEXT_PUBLIC_FFMPEG_MODULE_URL ??
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
-    const ffmpegUtilUrl =
-      process.env.NEXT_PUBLIC_FFMPEG_UTIL_URL ??
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js";
-    const ffmpegMod = (await importModule(ffmpegModuleUrl)) as FfmpegModule;
-    const utilMod = (await importModule(ffmpegUtilUrl)) as FfmpegUtilModule;
+    let ffmpegMod: FfmpegModule;
+    let utilMod: FfmpegUtilModule;
+    try {
+      ffmpegMod = (await importModule("@ffmpeg/ffmpeg")) as FfmpegModule;
+      utilMod = (await importModule("@ffmpeg/util")) as FfmpegUtilModule;
+    } catch (err) {
+      throw new Error(
+        `ffmpeg packages are not available. install @ffmpeg/ffmpeg and @ffmpeg/util (${formatError(err)})`,
+      );
+    }
     throwIfAborted(signal);
 
     const ffmpeg = new ffmpegMod.FFmpeg();
-    const coreURL = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ?? DEFAULT_CDN_CORE_URL;
-    const wasmURL = process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ?? DEFAULT_CDN_WASM_URL;
-    const workerURL = process.env.NEXT_PUBLIC_FFMPEG_WORKER_URL ?? DEFAULT_CDN_WORKER_URL;
+    const coreURL = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ?? DEFAULT_LOCAL_CORE_URL;
+    const wasmURL = process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ?? DEFAULT_LOCAL_WASM_URL;
+    const workerURL = process.env.NEXT_PUBLIC_FFMPEG_WORKER_URL ?? DEFAULT_LOCAL_WORKER_URL;
     const resolved = await resolveCoreUrls({
       utilMod,
       primary: { coreURL, wasmURL, workerURL },
       fallback: {
-        coreURL: DEFAULT_CDN_CORE_URL,
-        wasmURL: DEFAULT_CDN_WASM_URL,
-        workerURL: DEFAULT_CDN_WORKER_URL,
+        coreURL,
+        wasmURL,
+        workerURL,
       },
     });
     await ffmpeg.load(resolved);
@@ -211,12 +213,9 @@ export async function normalizeVideoFile(
   throw new Error(message);
 }
 
-const DEFAULT_CDN_CORE_URL =
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
-const DEFAULT_CDN_WASM_URL =
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm";
-const DEFAULT_CDN_WORKER_URL =
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js";
+const DEFAULT_LOCAL_CORE_URL = "/vendor/ffmpeg/ffmpeg-core.js";
+const DEFAULT_LOCAL_WASM_URL = "/vendor/ffmpeg/ffmpeg-core.wasm";
+const DEFAULT_LOCAL_WORKER_URL = "/vendor/ffmpeg/worker.js";
 
 async function resolveCoreUrls({
   utilMod,
