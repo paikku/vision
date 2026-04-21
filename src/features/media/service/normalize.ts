@@ -54,9 +54,15 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
     if (!endpoint) return null;
 
     return new Promise<File | null>((resolve) => {
+      let completed = false;
+      const resolveOnce = (value: File | null) => {
+        if (completed) return;
+        completed = true;
+        resolve(value);
+      };
       const xhr = new XMLHttpRequest();
       xhr.open("POST", endpoint);
-      xhr.responseType = "blob";
+      xhr.responseType = "arraybuffer";
 
       const emit = (phase: NormalizePhase, progress?: number) =>
         opts?.onProgress?.({ phase, progress, via: "server" });
@@ -82,11 +88,153 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
       };
 
       xhr.onload = () => {
+        const contentType = xhr.getResponseHeader("Content-Type") ?? "";
+        const isJson = contentType.includes("application/json");
+
+        // New async mode:
+        // POST /normalize/jobs => 202 { statusUrl, resultUrl }
+        // Keep legacy 200(video/mp4) path below.
+        if (xhr.status === 202 && isJson) {
+          void this.handleJobMode({
+            endpoint,
+            file,
+            xhr,
+            emit,
+            resolve: resolveOnce,
+            signal: opts?.signal,
+          });
+          return;
+        }
+
         if (xhr.status < 200 || xhr.status >= 300) {
+          resolveOnce(null);
+          return;
+        }
+        const body = xhr.response as ArrayBuffer | null;
+        if (!body) {
+          resolveOnce(null);
+          return;
+        }
+        resolveOnce(
+          new File([body], file.name.replace(/\.[^.]+$/, ".mp4"), {
+            type: "video/mp4",
+            lastModified: Date.now(),
+          }),
+        );
+      };
+      xhr.onerror = () => resolveOnce(null);
+      xhr.onabort = () => resolveOnce(null);
+      xhr.ontimeout = () => resolveOnce(null);
+
+      opts?.signal?.addEventListener("abort", () => xhr.abort(), {
+        once: true,
+      });
+
+      const body = new FormData();
+      body.append("file", file);
+      xhr.send(body);
+    });
+  }
+
+  private async handleJobMode({
+    endpoint,
+    file,
+    xhr,
+    emit,
+    resolve,
+    signal,
+  }: {
+    endpoint: string;
+    file: File;
+    xhr: XMLHttpRequest;
+    emit: (phase: NormalizePhase, progress?: number) => void;
+    resolve: (value: File | null) => void;
+    signal?: AbortSignal;
+  }) {
+    type JobCreateResponse = {
+      jobId?: string;
+      statusUrl?: string;
+      resultUrl?: string;
+    };
+
+    const decodeJson = <T,>(value: ArrayBuffer | null): T | null => {
+      if (!value) return null;
+      try {
+        const text = new TextDecoder().decode(value);
+        return JSON.parse(text) as T;
+      } catch {
+        return null;
+      }
+    };
+
+    const payload = decodeJson<JobCreateResponse>(xhr.response as ArrayBuffer | null);
+    const statusUrl = payload?.statusUrl
+      ? new URL(payload.statusUrl, endpoint).toString()
+      : null;
+    const resultUrl = payload?.resultUrl
+      ? new URL(payload.resultUrl, endpoint).toString()
+      : null;
+    const jobId = payload?.jobId;
+
+    if (!statusUrl || !resultUrl) {
+      resolve(null);
+      return;
+    }
+
+    let canceled = false;
+    const onAbort = () => {
+      canceled = true;
+      if (jobId && statusUrl) {
+        void fetch(statusUrl, {
+          method: "DELETE",
+        }).catch(() => {
+          // best effort cancel
+        });
+      }
+      resolve(null);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      while (!canceled) {
+        const statusResp = await fetch(statusUrl, { signal });
+        if (!statusResp.ok) {
           resolve(null);
           return;
         }
-        const blob = xhr.response as Blob | null;
+        const statusData = (await statusResp.json()) as {
+          status?: "queued" | "decoding" | "ready" | "failed";
+          state?: "queued" | "decoding" | "ready" | "failed";
+          progress?: number;
+        };
+        const state = statusData.status ?? statusData.state;
+        if (state === "failed") {
+          resolve(null);
+          return;
+        }
+        if (state === "ready") break;
+
+        emit("decoding", typeof statusData.progress === "number" ? statusData.progress : undefined);
+        await new Promise<void>((r) => setTimeout(r, 1000));
+      }
+
+      if (canceled) return;
+
+      const downloadXhr = new XMLHttpRequest();
+      downloadXhr.open("GET", resultUrl);
+      downloadXhr.responseType = "blob";
+      downloadXhr.onprogress = (e) => {
+        emit(
+          "downloading",
+          e.lengthComputable ? e.loaded / e.total : undefined,
+        );
+      };
+      downloadXhr.onload = () => {
+        if (downloadXhr.status < 200 || downloadXhr.status >= 300) {
+          resolve(null);
+          return;
+        }
+        const blob = downloadXhr.response as Blob | null;
         if (!blob) {
           resolve(null);
           return;
@@ -98,18 +246,17 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
           }),
         );
       };
-      xhr.onerror = () => resolve(null);
-      xhr.onabort = () => resolve(null);
-      xhr.ontimeout = () => resolve(null);
+      downloadXhr.onerror = () => resolve(null);
+      downloadXhr.onabort = () => resolve(null);
+      downloadXhr.ontimeout = () => resolve(null);
 
-      opts?.signal?.addEventListener("abort", () => xhr.abort(), {
-        once: true,
-      });
-
-      const body = new FormData();
-      body.append("file", file);
-      xhr.send(body);
-    });
+      signal?.addEventListener("abort", () => downloadXhr.abort(), { once: true });
+      downloadXhr.send();
+    } catch {
+      resolve(null);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
   }
 }
 
