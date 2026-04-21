@@ -22,7 +22,18 @@ export function inferMediaKind(file: File): "image" | "video" | null {
   return null;
 }
 
-export async function readMedia(file: File): Promise<MediaSource> {
+export type ReadMediaOptions = {
+  signal?: AbortSignal;
+  onNormalizeProgress?: (ratio: number) => void;
+  onNormalizeStatus?: (
+    status: "analyzing" | "ready-original" | "transcoding-server" | "transcoding-ffmpeg",
+  ) => void;
+};
+
+export async function readMedia(
+  file: File,
+  opts?: ReadMediaOptions,
+): Promise<MediaSource> {
   const kind = inferMediaKind(file);
   if (!kind) throw new Error(`Unsupported file type: ${file.type || "unknown"}`);
 
@@ -42,7 +53,11 @@ export async function readMedia(file: File): Promise<MediaSource> {
     };
   }
 
-  const normalized = await normalizeVideoFile(file);
+  const normalized = await normalizeVideoFile(file, {
+    signal: opts?.signal,
+    onProgress: opts?.onNormalizeProgress,
+    onStatus: opts?.onNormalizeStatus,
+  });
   const sourceFile = normalized.file;
   const url = URL.createObjectURL(sourceFile);
 
@@ -338,6 +353,7 @@ function getKeyframeTimesByWorker(
   maxFrames: number,
 ): Promise<number[] | null> {
   if (!file || typeof Worker === "undefined") return Promise.resolve(null);
+  if (!isMp4Like(file)) return Promise.resolve(null);
 
   return new Promise((resolve) => {
     const worker = new Worker("/workers/sprite-worker.js");
@@ -362,6 +378,11 @@ function getKeyframeTimesByWorker(
     worker.postMessage({ file, duration, maxFrames });
     setTimeout(() => done(null), 5000);
   });
+}
+
+function isMp4Like(file: File) {
+  if (file.type.toLowerCase().includes("mp4")) return true;
+  return /\.(mp4|m4v)$/i.test(file.name);
 }
 
 function dedupeAndClampTimes(times: number[], duration: number, maxFrames: number) {
