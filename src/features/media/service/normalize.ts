@@ -28,8 +28,25 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
     const body = new FormData();
     body.append("file", file);
 
-    const res = await fetch(endpoint, { method: "POST", body });
-    if (!res.ok) return null;
+    let res: Response;
+    try {
+      res = await fetch(endpoint, { method: "POST", body });
+    } catch (e) {
+      console.warn("[normalize] server unreachable:", e);
+      return null;
+    }
+
+    if (!res.ok) {
+      let detail = `status=${res.status}`;
+      try {
+        const err = (await res.json()) as { error?: string; message?: string };
+        detail = `status=${res.status} code=${err.error ?? "?"} message=${err.message ?? ""}`;
+      } catch {
+        // body not JSON; keep status-only detail
+      }
+      console.warn(`[normalize] server rejected: ${detail}`);
+      return null;
+    }
 
     const blob = await res.blob();
     return new File([blob], file.name.replace(/\.[^.]+$/, ".mp4"), {
@@ -48,7 +65,9 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
     await this.ensureLoaded();
     if (!this.ffmpeg || !this.fetchFile) return null;
 
-    const inputName = "input";
+    // Preserve the input extension so ffmpeg can auto-detect the demuxer.
+    const ext = (file.name.match(/\.([^.]+)$/)?.[1] ?? "bin").toLowerCase();
+    const inputName = `input.${ext}`;
     const outputName = "output.mp4";
 
     await this.ffmpeg.writeFile(inputName, await this.fetchFile(file));
@@ -61,6 +80,8 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
       "main",
       "-pix_fmt",
       "yuv420p",
+      "-vf",
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2",
       "-movflags",
       "+faststart",
       "-c:a",
@@ -107,7 +128,59 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
   }
 }
 
+/**
+ * Probe whether the browser can decode this file natively by loading its
+ * metadata into a detached <video>. Resolves quickly for playable files and
+ * times out for formats like AVI/MKV/WMV/FLV so we can route them through
+ * the normalize pipeline.
+ */
+function canBrowserPlay(file: File, timeoutMs = 1500): Promise<boolean> {
+  if (typeof document === "undefined") return Promise.resolve(false);
+  if (file.type) {
+    const probe = document.createElement("video");
+    if (probe.canPlayType(file.type) === "") return Promise.resolve(false);
+  }
+
+  const url = URL.createObjectURL(file);
+  return new Promise<boolean>((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+
+    const cleanup = () => {
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      video.removeAttribute("src");
+      try {
+        video.load();
+      } catch {}
+      URL.revokeObjectURL(url);
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+
+    video.onloadedmetadata = () => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(true);
+    };
+    video.onerror = () => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(false);
+    };
+    video.src = url;
+  });
+}
+
 export async function normalizeVideoFile(file: File): Promise<NormalizeVideoResult> {
+  if (await canBrowserPlay(file)) {
+    return { file, via: "original" };
+  }
+
   const adapters: VideoNormalizeAdapter[] = [
     new ServerNormalizeAdapter(),
     new FfmpegWasmNormalizeAdapter(),
@@ -121,8 +194,8 @@ export async function normalizeVideoFile(file: File): Promise<NormalizeVideoResu
         file: normalized,
         via: adapter.name,
       };
-    } catch {
-      // try next adapter
+    } catch (e) {
+      console.warn(`[normalize] ${adapter.name} threw:`, e);
     }
   }
 

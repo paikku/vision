@@ -16,9 +16,28 @@ export type VideoSprite = {
   timestamps: number[];
 };
 
+const IMAGE_EXTENSIONS = new Set([
+  "jpg", "jpeg", "png", "webp", "gif", "bmp", "avif",
+]);
+const VIDEO_EXTENSIONS = new Set([
+  "mp4", "m4v", "webm", "mov", "ogv",
+  "avi", "mkv", "wmv", "flv",
+  "mpg", "mpeg", "ts", "m2ts", "mts",
+  "3gp", "3g2", "mxf", "asf", "vob", "divx", "rm", "rmvb",
+]);
+
+function fileExtension(name: string): string {
+  const m = /\.([^.]+)$/.exec(name);
+  return m ? m[1].toLowerCase() : "";
+}
+
 export function inferMediaKind(file: File): "image" | "video" | null {
   if (file.type.startsWith("image/")) return "image";
   if (file.type.startsWith("video/")) return "video";
+  // Some browsers/OSes leave `file.type` empty for less common formats (AVI, MKV, etc.).
+  const ext = fileExtension(file.name);
+  if (IMAGE_EXTENSIONS.has(ext)) return "image";
+  if (VIDEO_EXTENSIONS.has(ext)) return "video";
   return null;
 }
 

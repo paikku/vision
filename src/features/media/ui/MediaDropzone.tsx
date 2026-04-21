@@ -66,10 +66,10 @@ export function MediaDropzone() {
         </div>
         <div>
           <p className="text-base font-medium">
-            {busy ? "Reading file…" : "Drop an image or video"}
+            {busy ? "Preparing file…" : "Drop an image or video"}
           </p>
           <p className="mt-1 text-sm text-[var(--color-muted)]">
-            or click to browse · jpg, png, webp, mp4, webm, mov
+            or click to browse · jpg, png, webp, mp4, webm, mov, avi, mkv, wmv, flv
           </p>
         </div>
         {error && (
@@ -78,7 +78,7 @@ export function MediaDropzone() {
         <input
           ref={inputRef}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*,video/*,.avi,.mkv,.wmv,.flv,.mpg,.mpeg,.ts,.m2ts,.mts,.3gp,.3g2,.mxf,.asf,.vob,.divx,.rm,.rmvb"
           className="sr-only"
           onChange={(e) => void handleFiles(e.target.files)}
         />
