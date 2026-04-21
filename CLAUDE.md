@@ -215,6 +215,8 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 - `MediaSource`는 `file?: File` 포함 (worker 전처리용)
 - sprite/object URL은 cleanup에서 revoke해 메모리 누수 방지
 - 무거운 작업은 worker/헬퍼 함수로 분리해 UI 인터랙션 블로킹 방지
-- 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
+- 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT` 설정 시) 우선, 실패 시 ffmpeg.wasm 폴백
+- 서버 정규화 endpoint는 `multipart/form-data`의 `file` 필드를 입력으로 받고 `video/mp4`를 반환해야 함. 로컬 Route Handler는 `app/api/normalize/route.ts`에 제공되며 실제 트랜스코더 업스트림(`VIDEO_NORMALIZE_UPSTREAM_URL`)으로 프록시 가능
+- ffmpeg 모듈/코어/워커는 기본적으로 CDN(jsdelivr)에서 동적 로드되며, 필요 시 `NEXT_PUBLIC_FFMPEG_MODULE_URL`, `NEXT_PUBLIC_FFMPEG_UTIL_URL`, `NEXT_PUBLIC_FFMPEG_CORE_URL`, `NEXT_PUBLIC_FFMPEG_WASM_URL`, `NEXT_PUBLIC_FFMPEG_WORKER_URL`로 오버라이드 가능
 - 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지)
 - 프레임 추출 컨트롤: `src/features/media/ui/frame-extract/ExtractionPanel.tsx`
