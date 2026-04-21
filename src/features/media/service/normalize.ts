@@ -116,26 +116,33 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
     if (this.ffmpeg && this.fetchFile) return;
     throwIfAborted(signal);
 
-    const importFromUrl = (url: string) =>
-      Function("u", "return import(u)")(url) as Promise<unknown>;
-    const ffmpegModuleUrl =
-      process.env.NEXT_PUBLIC_FFMPEG_MODULE_URL ??
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
-    const ffmpegUtilUrl =
-      process.env.NEXT_PUBLIC_FFMPEG_UTIL_URL ??
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js";
+    const importModule = (moduleId: string) =>
+      Function("m", "return import(m)")(moduleId) as Promise<unknown>;
 
-    const ffmpegMod = (await importFromUrl(ffmpegModuleUrl)) as FfmpegModule;
-    const utilMod = (await importFromUrl(ffmpegUtilUrl)) as FfmpegUtilModule;
+    let ffmpegMod: FfmpegModule;
+    let utilMod: FfmpegUtilModule;
+    try {
+      ffmpegMod = (await importModule("@ffmpeg/ffmpeg")) as FfmpegModule;
+      utilMod = (await importModule("@ffmpeg/util")) as FfmpegUtilModule;
+    } catch {
+      const ffmpegModuleUrl =
+        process.env.NEXT_PUBLIC_FFMPEG_MODULE_URL ??
+        "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
+      const ffmpegUtilUrl =
+        process.env.NEXT_PUBLIC_FFMPEG_UTIL_URL ??
+        "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js";
+      ffmpegMod = (await importModule(ffmpegModuleUrl)) as FfmpegModule;
+      utilMod = (await importModule(ffmpegUtilUrl)) as FfmpegUtilModule;
+    }
     throwIfAborted(signal);
 
     const ffmpeg = new ffmpegMod.FFmpeg();
     const coreURL =
       process.env.NEXT_PUBLIC_FFMPEG_CORE_URL ??
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+      "/vendor/ffmpeg/ffmpeg-core.js";
     const wasmURL =
       process.env.NEXT_PUBLIC_FFMPEG_WASM_URL ??
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm";
+      "/vendor/ffmpeg/ffmpeg-core.wasm";
     await ffmpeg.load({
       coreURL,
       wasmURL,
