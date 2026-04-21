@@ -40,7 +40,8 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
 
   async normalize(file: File, opts?: NormalizeVideoOptions): Promise<File | null> {
     throwIfAborted(opts?.signal);
-    const endpoint = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT ?? "/api/normalize";
+    const endpoint = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT;
+    if (!endpoint) return null;
 
     const body = new FormData();
     body.append("file", file);
