@@ -227,28 +227,30 @@ async function resolveCoreUrls({
   primary: { coreURL: string; wasmURL: string; workerURL: string };
   fallback: { coreURL: string; wasmURL: string; workerURL: string };
 }): Promise<{ coreURL: string; wasmURL: string; workerURL: string }> {
-  if (!utilMod.toBlobURL) {
-    try {
-      await fetch(primary.coreURL, { method: "HEAD" });
-      return primary;
-    } catch {
-      return fallback;
-    }
-  }
+  const toBlob = utilMod.toBlobURL ?? toBlobURLViaFetch;
 
   try {
     return {
-      coreURL: await utilMod.toBlobURL(primary.coreURL, "text/javascript"),
-      wasmURL: await utilMod.toBlobURL(primary.wasmURL, "application/wasm"),
-      workerURL: await utilMod.toBlobURL(primary.workerURL, "text/javascript"),
+      coreURL: await toBlob(primary.coreURL, "text/javascript"),
+      wasmURL: await toBlob(primary.wasmURL, "application/wasm"),
+      workerURL: await toBlob(primary.workerURL, "text/javascript"),
     };
   } catch {
     return {
-      coreURL: await utilMod.toBlobURL(fallback.coreURL, "text/javascript"),
-      wasmURL: await utilMod.toBlobURL(fallback.wasmURL, "application/wasm"),
-      workerURL: await utilMod.toBlobURL(fallback.workerURL, "text/javascript"),
+      coreURL: await toBlob(fallback.coreURL, "text/javascript"),
+      wasmURL: await toBlob(fallback.wasmURL, "application/wasm"),
+      workerURL: await toBlob(fallback.workerURL, "text/javascript"),
     };
   }
+}
+
+async function toBlobURLViaFetch(url: string, mimeType: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`asset fetch failed (${res.status}) for ${url}`);
+  }
+  const buf = await res.arrayBuffer();
+  return URL.createObjectURL(new Blob([buf], { type: mimeType }));
 }
 
 async function needsVideoTranscode(file: File, signal?: AbortSignal): Promise<boolean> {
