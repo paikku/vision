@@ -276,17 +276,30 @@ function VideoTable({
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-line)]">
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              {/* Fixed widths so rows don't reflow as class badges pile up.
+                  The "라벨 종류" column is the only flexible one — it soaks
+                  up the leftover space and wraps its pills to new lines. */}
+              <col style={{ width: 40 }} />
+              <col style={{ width: 260 }} />
+              <col />
+              <col style={{ width: 96 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 72 }} />
+              <col style={{ width: 160 }} />
+            </colgroup>
             <thead className="bg-[var(--color-surface)] text-left text-xs text-[var(--color-muted)]">
               <tr>
-                <th className="w-8 px-3 py-2"></th>
+                <th className="px-3 py-2"></th>
                 <th className="px-3 py-2">동영상</th>
                 <th className="px-3 py-2">라벨 종류</th>
                 <th className="px-3 py-2 text-right">해상도</th>
                 <th className="px-3 py-2 text-right">길이</th>
                 <th className="px-3 py-2 text-right">프레임</th>
                 <th className="px-3 py-2 text-right">라벨</th>
-                <th className="w-40 px-3 py-2 text-right">작업</th>
+                <th className="px-3 py-2 text-right">작업</th>
               </tr>
             </thead>
             <tbody>
@@ -375,7 +388,7 @@ function VideoRow({
           aria-label={`${v.name} 선택`}
         />
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 align-top">
         <div className="flex items-start gap-2">
           {inlineThumb && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -386,18 +399,22 @@ function VideoRow({
               className="h-10 w-16 shrink-0 rounded border border-[var(--color-line)] bg-black object-cover"
             />
           )}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
+            {/* block + w-full makes `truncate` work inside the flex cell:
+                truncate requires a width-bounded block box to apply the
+                ellipsis. title attribute exposes the full name on hover. */}
             <button
               type="button"
               onMouseEnter={startReel}
               onMouseMove={moveReel}
               onMouseLeave={stopReel}
-              className="truncate text-left font-medium hover:text-[var(--color-accent)]"
+              title={v.name}
               aria-label={`${v.name} 미리보기`}
+              className="block w-full truncate text-left font-medium hover:text-[var(--color-accent)]"
             >
               {v.name}
             </button>
-            <div className="text-[10px] text-[var(--color-muted)]">
+            <div className="truncate text-[10px] text-[var(--color-muted)]">
               <span className="rounded bg-[var(--color-surface-2)] px-1 py-px uppercase tracking-wide">
                 {v.kind}
               </span>{" "}
@@ -406,7 +423,7 @@ function VideoRow({
           </div>
         </div>
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 align-top">
         {classBadges.length === 0 ? (
           <span className="text-[10px] text-[var(--color-muted)]">—</span>
         ) : (
@@ -414,26 +431,32 @@ function VideoRow({
             {classBadges.map((c) => (
               <span
                 key={c.id}
-                className="inline-flex items-center gap-1 rounded-full px-1.5 py-px text-[10px] text-white"
+                className="inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-px text-[10px] text-white"
                 style={{ background: c.color }}
                 title={`${c.name} · ${bundle.classCounts.get(c.id) ?? 0}`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-white/60" />
-                {c.name} · {bundle.classCounts.get(c.id) ?? 0}
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/60" />
+                <span className="truncate">
+                  {c.name} · {bundle.classCounts.get(c.id) ?? 0}
+                </span>
               </span>
             ))}
           </div>
         )}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">
+      <td className="px-3 py-2 text-right align-top tabular-nums">
         {v.width}×{v.height}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">
+      <td className="px-3 py-2 text-right align-top tabular-nums">
         {v.duration ? `${v.duration.toFixed(1)}s` : "—"}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">{v.frameCount}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{v.annotationCount}</td>
-      <td className="px-3 py-2 text-right">
+      <td className="px-3 py-2 text-right align-top tabular-nums">
+        {v.frameCount}
+      </td>
+      <td className="px-3 py-2 text-right align-top tabular-nums">
+        {v.annotationCount}
+      </td>
+      <td className="px-3 py-2 text-right align-top">
         <div className="flex items-center justify-end gap-2">
           <Link
             href={`/projects/${projectId}/videos/${v.id}`}
