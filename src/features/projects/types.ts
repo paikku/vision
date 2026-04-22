@@ -27,6 +27,8 @@ export type VideoMeta = {
   duration?: number;
   ingestVia?: "original" | "ffmpeg-wasm" | "server";
   sourceExt: string;
+  /** Number of preview thumbnails on disk (0..previewCount-1). */
+  previewCount?: number;
   createdAt: number;
 };
 

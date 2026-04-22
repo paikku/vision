@@ -70,6 +70,8 @@ export type VideoMeta = {
   duration?: number;
   ingestVia?: "original" | "ffmpeg-wasm" | "server";
   sourceExt: string;
+  /** Number of preview thumbnails on disk (preview-0.jpg ... preview-{n-1}.jpg). */
+  previewCount?: number;
   createdAt: number;
 };
 
@@ -380,6 +382,49 @@ export async function deleteFrame(
     `${safeId(frameId)}.${ext}`,
   );
   await fs.rm(p, { force: true });
+}
+
+// ---------- previews (mini hover-reel thumbnails) ----------
+
+function previewPath(projectId: string, videoId: string, idx: number): string {
+  return path.join(videoDir(projectId, videoId), `preview-${idx}.jpg`);
+}
+
+export async function writePreviews(
+  projectId: string,
+  videoId: string,
+  buffers: Buffer[],
+): Promise<number> {
+  const meta = await getVideoMeta(projectId, videoId);
+  if (!meta) throw new Error("video not found");
+  // Wipe any older preview set so a re-upload doesn't leave stale frames.
+  const oldCount = meta.previewCount ?? 0;
+  for (let i = 0; i < Math.max(oldCount, buffers.length); i++) {
+    await fs.rm(previewPath(projectId, videoId, i), { force: true });
+  }
+  for (let i = 0; i < buffers.length; i++) {
+    await fs.writeFile(
+      previewPath(projectId, videoId, i),
+      new Uint8Array(buffers[i]),
+    );
+  }
+  const next: VideoMeta = { ...meta, previewCount: buffers.length };
+  await writeJson(path.join(videoDir(projectId, videoId), "meta.json"), next);
+  return buffers.length;
+}
+
+export async function readPreview(
+  projectId: string,
+  videoId: string,
+  idx: number,
+): Promise<Buffer | null> {
+  if (!Number.isInteger(idx) || idx < 0) return null;
+  try {
+    return await fs.readFile(previewPath(projectId, videoId, idx));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
 }
 
 export function mimeForExt(ext: string): string {

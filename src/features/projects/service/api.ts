@@ -169,8 +169,40 @@ export async function deleteFrame(
   );
 }
 
-export function exportUrl(projectId: string, videoIds?: string[]): string {
+export function exportUrl(
+  projectId: string,
+  selection?: { videoIds?: string[]; frameIds?: string[] },
+): string {
   const base = `/api/projects/${projectId}/export`;
-  if (!videoIds || videoIds.length === 0) return base;
-  return `${base}?videos=${encodeURIComponent(videoIds.join(","))}`;
+  const params = new URLSearchParams();
+  if (selection?.frameIds && selection.frameIds.length > 0) {
+    params.set("frames", selection.frameIds.join(","));
+  } else if (selection?.videoIds && selection.videoIds.length > 0) {
+    params.set("videos", selection.videoIds.join(","));
+  }
+  const q = params.toString();
+  return q ? `${base}?${q}` : base;
+}
+
+export function previewUrl(
+  projectId: string,
+  videoId: string,
+  idx: number,
+): string {
+  return `/api/projects/${projectId}/videos/${videoId}/previews/${idx}`;
+}
+
+export async function uploadPreviews(
+  projectId: string,
+  videoId: string,
+  blobs: Blob[],
+): Promise<number> {
+  const form = new FormData();
+  blobs.forEach((b, i) => form.append("files", b, `preview-${i}.jpg`));
+  const r = await fetch(`/api/projects/${projectId}/videos/${videoId}/previews`, {
+    method: "POST",
+    body: form,
+  });
+  const { previewCount } = await asJson<{ previewCount: number }>(r);
+  return previewCount;
 }
