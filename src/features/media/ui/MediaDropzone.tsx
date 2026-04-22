@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import type { MediaSource } from "../types";
 import {
   frameFromImage,
   inferMediaKind,
@@ -22,7 +23,17 @@ function phaseLabel(p: NormalizeProgress): string {
   }
 }
 
-export function MediaDropzone() {
+export type MediaDropzoneProps = {
+  /**
+   * If provided, the dropzone delegates what to do with the normalized media
+   * to the caller instead of committing it to the workspace store. Enables
+   * reuse from upload-to-project modals. When omitted, the default workspace
+   * behavior (setMedia + addFrames for images) runs.
+   */
+  onComplete?: (media: MediaSource) => Promise<void> | void;
+};
+
+export function MediaDropzone({ onComplete }: MediaDropzoneProps = {}) {
   const setMedia = useStore((s) => s.setMedia);
   const addFrames = useStore((s) => s.addFrames);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,9 +58,15 @@ export function MediaDropzone() {
         const media = await readMedia(file, {
           onProgress: (p) => setProgress(p),
         });
-        setMedia(media);
-        if (media.kind === "image") {
-          addFrames([await frameFromImage(media)]);
+        if (onComplete) {
+          await onComplete(media);
+          // Caller owns the object URL — don't leak it as workspace media.
+          URL.revokeObjectURL(media.url);
+        } else {
+          setMedia(media);
+          if (media.kind === "image") {
+            addFrames([await frameFromImage(media)]);
+          }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to read file");
@@ -58,7 +75,7 @@ export function MediaDropzone() {
         setProgress(null);
       }
     },
-    [addFrames, busy, setMedia],
+    [addFrames, busy, onComplete, setMedia],
   );
 
   // While the request is in-flight:

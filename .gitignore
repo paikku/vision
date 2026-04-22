@@ -39,3 +39,6 @@ next-env.d.ts
 # editors
 .vscode/
 .idea/
+
+# local filesystem storage for projects (videos, frames, annotations)
+/storage/
