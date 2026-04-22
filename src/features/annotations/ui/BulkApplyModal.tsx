@@ -2,10 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Frame } from "@/features/frames/types";
+import { selectVisibleFrames, useStore } from "@/lib/store";
 import type { Annotation, LabelClass } from "../types";
-
-type SortOrder = "added" | "time";
-type FilterMode = "all" | "unlabeled";
 
 type ContextMenu = { frameId: string; x: number; y: number };
 
@@ -29,8 +27,14 @@ export function BulkApplyModal({
   onApply,
   onClose,
 }: Props) {
-  const [sort, setSort] = useState<SortOrder>("added");
-  const [filter, setFilter] = useState<FilterMode>("all");
+  // Sort/filter mirror the FrameStrip so the modal preview matches what the user
+  // sees on the left. Changing them here updates the strip too.
+  const sort = useStore((s) => s.frameSortOrder);
+  const filter = useStore((s) => s.frameFilterMode);
+  const setSort = useStore((s) => s.setFrameSortOrder);
+  const setFilter = useStore((s) => s.setFrameFilterMode);
+  const activeFrameId = useStore((s) => s.activeFrameId);
+
   const [selected, setSelected] = useState<Set<string>>(() => new Set(frames.map((f) => f.id)));
   const [ctxMenu, setCtxMenu] = useState<ContextMenu | null>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -58,18 +62,44 @@ export function BulkApplyModal({
     return map;
   }, [annotations]);
 
-  const sortedFrames = useMemo(() => {
-    const list = [...frames];
-    if (sort === "time") list.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-    return list;
-  }, [frames, sort]);
+  // Per-frame class breakdown — same shape as FrameStrip so the summary UI matches.
+  const classCounts = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
+    for (const a of annotations) {
+      let inner = map.get(a.frameId);
+      if (!inner) { inner = new Map(); map.set(a.frameId, inner); }
+      inner.set(a.classId, (inner.get(a.classId) ?? 0) + 1);
+    }
+    return map;
+  }, [annotations]);
 
-  const displayFrames = useMemo(() => {
-    if (filter === "all") return sortedFrames;
-    return sortedFrames.filter(
-      (f) => (counts.get(f.id) ?? 0) === 0 && !exceptedFrameIds[f.id],
+  const classById = useMemo(() => {
+    const map = new Map<string, LabelClass>();
+    for (const c of classes) map.set(c.id, c);
+    return map;
+  }, [classes]);
+
+  const displayFrames = useMemo(
+    () =>
+      selectVisibleFrames({
+        frames,
+        annotations,
+        exceptedFrameIds,
+        frameSortOrder: sort,
+        frameFilterMode: filter,
+      }),
+    [frames, annotations, exceptedFrameIds, sort, filter],
+  );
+
+  // Scroll the active frame into view on open / when it changes.
+  const gridRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!activeFrameId) return;
+    const el = gridRef.current?.querySelector<HTMLElement>(
+      `[data-frame-id="${activeFrameId}"]`,
     );
-  }, [sortedFrames, filter, counts, exceptedFrameIds]);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeFrameId]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -133,7 +163,7 @@ export function BulkApplyModal({
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-line)] px-4 py-2">
           <div className="flex items-center gap-1">
             <span className="text-[11px] text-[var(--color-muted)]">정렬</span>
-            {(["added", "time"] as SortOrder[]).map((s) => (
+            {(["added", "time"] as const).map((s) => (
               <button key={s} type="button" onClick={() => setSort(s)}
                 className={["rounded px-2 py-0.5 text-[11px] transition", sort === s ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"].join(" ")}>
                 {s === "added" ? "추가순" : "시간순"}
@@ -142,7 +172,7 @@ export function BulkApplyModal({
           </div>
           <div className="flex items-center gap-1">
             <span className="text-[11px] text-[var(--color-muted)]">필터</span>
-            {(["all", "unlabeled"] as FilterMode[]).map((f) => (
+            {(["all", "unlabeled"] as const).map((f) => (
               <button key={f} type="button" onClick={() => setFilter(f)}
                 className={["rounded px-2 py-0.5 text-[11px] transition", filter === f ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"].join(" ")}>
                 {f === "all" ? "전체" : "미라벨"}
@@ -162,22 +192,32 @@ export function BulkApplyModal({
         </div>
 
         {/* Thumbnail grid */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div ref={gridRef} className="flex-1 overflow-y-auto p-4">
           {displayFrames.length === 0 ? (
             <p className="py-8 text-center text-sm text-[var(--color-muted)]">표시할 프레임 없음</p>
           ) : (
             <div className="grid grid-cols-3 gap-4 lg:grid-cols-4 xl:grid-cols-5">
-              {displayFrames.map((f, idx) => {
+              {displayFrames.map((f) => {
                 const isSelected = selected.has(f.id);
+                const isActive = f.id === activeFrameId;
                 const originalIdx = frames.indexOf(f);
+                const count = counts.get(f.id) ?? 0;
+                const excepted = !!exceptedFrameIds[f.id];
+                const frameClassCounts = classCounts.get(f.id);
                 return (
                   <div
                     key={f.id}
+                    data-frame-id={f.id}
+                    style={
+                      isActive
+                        ? { outline: "3px solid #fbbf24", outlineOffset: "2px" }
+                        : undefined
+                    }
                     className={[
                       "group relative cursor-pointer select-none overflow-hidden rounded-lg border-2 transition",
                       isSelected
                         ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30"
-                        : "border-[var(--color-line)] opacity-50",
+                        : "border-[var(--color-line)] opacity-60 hover:opacity-90",
                     ].join(" ")}
                     onClick={() => toggle(f.id)}
                     onContextMenu={(e) => {
@@ -205,9 +245,48 @@ export function BulkApplyModal({
                         {isSelected && "✓"}
                       </div>
                     </div>
-                    {/* Frame label */}
-                    <div className="bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-muted)] truncate">
-                      #{String(originalIdx + 1).padStart(2, "0")} · {f.label}
+                    {/* Active frame badge */}
+                    {isActive && (
+                      <span
+                        className="absolute right-1 top-1 rounded-full px-1.5 py-px text-[10px] font-semibold text-black shadow"
+                        style={{ background: "#fbbf24" }}
+                      >
+                        현재
+                      </span>
+                    )}
+                    {/* Footer: index + label + annotation count (matches FrameStrip) */}
+                    <div className="flex items-center justify-between bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-muted)]">
+                      <span className="tabular-nums truncate">
+                        #{String(originalIdx + 1).padStart(2, "0")} · {f.label}
+                      </span>
+                      <span className="ml-1 shrink-0 rounded-full bg-[var(--color-surface-2)] px-1.5 text-[10px] text-[var(--color-text)]">
+                        {count}
+                      </span>
+                    </div>
+                    {/* Class breakdown badges or excepted indicator */}
+                    <div className="flex flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1 min-h-[18px]">
+                      {count === 0
+                        ? excepted && (
+                            <span className="flex items-center gap-0.5 rounded-full bg-[var(--color-accent)]/80 px-1.5 py-px text-[10px] text-white">
+                              제외됨
+                            </span>
+                          )
+                        : frameClassCounts &&
+                          [...frameClassCounts.entries()].map(([cid, n]) => {
+                            const cls = classById.get(cid);
+                            if (!cls) return null;
+                            return (
+                              <span
+                                key={cid}
+                                className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] text-white"
+                                style={{ background: cls.color }}
+                                title={cls.name}
+                              >
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/50" />
+                                {n}
+                              </span>
+                            );
+                          })}
                     </div>
                   </div>
                 );
