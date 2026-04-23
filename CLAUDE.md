@@ -18,8 +18,12 @@ npm run lint       # next lint 기반 ESLint
 ## 2) 아키텍처 개요
 
 - **Stack**: Next.js 15 (App Router), React 19, Zustand 5, Tailwind v4, TypeScript(strict)
-- 앱은 단일 페이지 라벨링 워크스페이스 구조이며, `app/page.tsx`에서 `<Workspace />`를 렌더링합니다.
-- 스토어에 `media`가 있으면 어노테이션 워크스페이스를, 없으면 업로드 화면을 표시합니다.
+- 앱 진입점은 `/` → `/projects` 리디렉션(`app/page.tsx`)입니다. 라벨링 워크스페이스는 특정 비디오 URL(`/projects/[id]/videos/[vid]`) 하위에 위치합니다.
+- 라우트 구성:
+  - `/projects` — 프로젝트 목록/생성/삭제 (`ProjectsPage`)
+  - `/projects/[id]` — 비디오 테이블·프레임 그리드·다운로드 (`ProjectDetailPage`)
+  - `/projects/[id]/videos/[vid]` — 어노테이션 워크스페이스 (`ProjectWorkspace`)
+- 라벨링 워크스페이스는 페이지 마운트 시 `getVideoData()`로 서버 데이터를 가져와 store를 hydrate한 뒤 `media`가 채워지면 렌더됩니다.
 
 ### Feature 경계 (중요)
 
@@ -28,14 +32,17 @@ npm run lint       # next lint 기반 ESLint
 
 ```text
 src/
-  components/           # shell · 여러 feature 조합하는 유일한 자리
+  components/           # shell · 여러 feature 조합하는 유일한 자리 (ProjectsPage, ProjectDetailPage, ProjectWorkspace, ProjectTopBar, UploadVideoModal, useProjectSync)
   features/
     media/              # 업로드·normalize·비디오 재생·프레임 추출
     frames/             # 프레임 목록·활성 프레임·exception
     annotations/        # class·shape·tool·drawing·keyboard
     export/             # 직렬화/다운로드
+    projects/           # 프로젝트·비디오·프레임 서버 API 래퍼 (fetch 기반, store 비의존)
   shared/               # 순수 유틸·범용 훅
-  lib/store.ts          # 슬라이스 합성 루트 (useStore 공개 API)
+  lib/
+    store.ts            # 슬라이스 합성 루트 (useStore 공개 API)
+    server/storage.ts   # 서버 전용 파일시스템 persistence helper
 ```
 
 - 크로스 feature 로직은 **shell(components/) 또는 `lib/store.ts` composition root**에만.
@@ -218,3 +225,74 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 - 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
 - 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지)
 - 프레임 추출 컨트롤: `src/features/media/ui/frame-extract/ExtractionPanel.tsx`
+
+---
+
+## 11) 프로젝트/비디오 관리 (서버 persistence)
+
+라벨링 워크스페이스 위에 프로젝트·비디오 관리 레이어가 얹혀 있습니다. 비디오·프레임·어노테이션은 로컬 파일시스템(`./storage/`, gitignored)에 저장되며, 모든 API는 `src/lib/server/storage.ts`를 거치므로 향후 DB 교체 시 이 단일 파일만 바꾸면 됩니다.
+
+### 11.1 디스크 레이아웃 (`STORAGE_ROOT = ./storage`)
+
+```text
+storage/
+  projects.json                              # ProjectSummary[]
+  {projectId}/
+    project.json                             # { id, name, createdAt, members }
+    videos.json                              # VideoSummary[]
+    {videoId}/
+      meta.json                              # VideoMeta (+ previewCount)
+      source.<ext>                           # normalize된 원본 비디오/이미지
+      data.json                              # { classes, frames[], annotations[] }
+      frames/{frameId}.jpg                   # 추출/캡처된 프레임 바이트
+      preview-{0..previewCount-1}.jpg        # 비디오 hover-reel 썸네일
+```
+
+### 11.2 API 라우트 (`app/api/projects/...`)
+
+| Method | Path | 용도 |
+|---|---|---|
+| GET/POST | `/api/projects` | 목록·생성 |
+| GET/DELETE | `/api/projects/[id]` | detail(프로젝트 + videos)·삭제 |
+| GET/POST | `/api/projects/[id]/videos` | 비디오 목록·업로드(multipart) |
+| GET/DELETE | `/api/projects/[id]/videos/[vid]` | meta 조회·삭제(프레임 포함 재귀 정리) |
+| GET | `/api/projects/[id]/videos/[vid]/source` | 원본 비디오 스트림 |
+| GET/PUT | `/api/projects/[id]/videos/[vid]/data` | `data.json` 조회·저장 (**PUT은 classes+annotations만 덮어씀**, frames는 별도 엔드포인트로 관리) |
+| POST | `/api/projects/[id]/videos/[vid]/frames` | 프레임 일괄 업로드(multipart, meta JSON + files) |
+| GET/DELETE | `/api/projects/[id]/videos/[vid]/frames/[fid]` | 프레임 이미지·삭제 |
+| POST | `/api/projects/[id]/videos/[vid]/previews` | hover-reel 썸네일 일괄 업로드 |
+| GET | `/api/projects/[id]/videos/[vid]/previews/[idx]` | 개별 preview |
+| GET | `/api/projects/[id]/export?videos=&frames=` | 선택된 videos/frames의 JSON export (frames 우선) |
+
+클라이언트 측 fetch 래퍼는 모두 `src/features/projects/service/api.ts`에 있습니다. `features/projects/index.ts`는 **타입만** 재export하고 서비스는 경로로 직접 import (service → store 접근 금지 규칙 준수).
+
+### 11.3 ProjectDetailPage (`src/components/ProjectDetailPage.tsx`)
+
+- **비디오 테이블**: `table-fixed` + `<colgroup>` 고정폭(체크박스 40 / 이름 260 / 해상도 96 / duration·frames·labels 72 / actions 160, "라벨 종류"가 잔여 폭 흡수). 긴 이름은 `truncate` + `title=`.
+- **비디오 hover-reel**: 이름 좌측에 `preview-0.jpg` 인라인, hover 시 `PREVIEW_REEL_INTERVAL_MS = 220ms`로 전체 preview 순환. 모든 이미지를 미리 마운트해 깜빡임 방지.
+- **프리뷰 tooltip**: 프레임 썸네일/미리보기 버튼 hover 시 `createPortal`로 document.body에 렌더 → table row 마크업 밖으로 escape. 프레임 tooltip은 class 색상 rect + HTML 라벨 오버레이 포함.
+- **프레임 그리드 가상화**: `FRAMES_PAGE_SIZE = 50` 단위로 `IntersectionObserver` sentinel이 뷰포트 진입 시 50개씩 창 확장. 수천 개 프레임에도 초기 렌더 비용을 일정하게 유지.
+- **선택 모델**: 비디오 체크박스는 해당 비디오의 모든 프레임을 토글(+per-frame override 초기화), 프레임 체크박스는 개별 토글. 최종 선택은 둘의 합집합. Download는 `frames=`(있으면 우선) 또는 `videos=`로 export URL 생성.
+- **Class breakdown**: `VideoBundle.classCounts`로 비디오 행 "라벨 종류" 컬럼에 색상 pill + 카운트. 셀별 `max-w-full` + 내부 truncate로 긴 class 이름도 가로 overflow 없음.
+
+### 11.4 업로드 플로우 (`UploadVideoModal`)
+
+- `MediaDropzone`을 `onComplete` 콜백 모드로 재사용 (store에 commit하지 않고 정규화 결과만 콜백에 전달).
+- 업로드 완료 후 비디오라면 `extractFrames(evenlySpacedTimes(duration, PREVIEW_COUNT=10))`으로 10장 추출 → `uploadPreviews()`로 POST. preview 업로드 실패는 비차단(best-effort).
+
+### 11.5 useProjectSync (`src/components/useProjectSync.ts`)
+
+`ProjectWorkspace` 안에서 store ↔ 서버 동기화를 전담하는 hook. 책임은 세 가지:
+
+1. **프레임 업로드**: `blob:` URL로 새로 추가된 frame을 `uploadFrames()`로 보내고, 성공 시 `useStore.setState`로 URL을 서버 URL(`frameImageUrl(...)`)로 교체 + 기존 blob URL revoke. 중복 업로드 방지용 `knownFrameIdsRef` / `uploadingRef` 관리.
+2. **프레임 삭제**: store에서 빠진 frame id를 감지하면 `apiDeleteFrame()` 호출.
+3. **data.json 디바운스 저장**: classes/annotations 변경 시 500ms 디바운스 후 `saveVideoData()`. 프레임 배열은 여기서 보내지 않음 — `frames: []`로 명시해 별도 엔드포인트(POST/DELETE frames)와의 경쟁을 차단.
+
+### 11.6 ProjectWorkspace 하이드레이션
+
+`ProjectWorkspace`는 마운트 시 `reset()` → `getVideoData()` → 비디오 파일을 blob으로 fetch해 `File` 생성 → `MediaSource` 조립 → `useStore.setState({ media, frames, annotations, classes, activeFrameId, activeClassId, centerViewMode })`. 서버에 classes가 없으면 기본 class 하나로 seed. 프레임 URL은 서버 URL이므로 cleanup의 revoke는 no-op, video blob URL만 실제로 revoke됨.
+
+### 11.7 설정
+
+- `storage/`는 `.gitignore` 대상.
+- `next.config.mjs`에서 `experimental.serverActions.bodySizeLimit = "2gb"`로 대용량 비디오 업로드 허용.
