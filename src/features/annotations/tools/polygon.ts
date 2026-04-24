@@ -10,6 +10,13 @@ const MIN_POINTS = 3;
  * can't see or move later.
  */
 const MIN_STEP = 0.001;
+/**
+ * Clicks within this normalized distance of the first vertex snap-close
+ * the polygon (requires ≥3 points). Matches the visual radius of the
+ * first-vertex affordance (~4px on a default stage) so users only close
+ * when they're deliberately clicking the dot.
+ */
+const CLOSE_ON_FIRST_DIST = 0.005;
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -28,13 +35,19 @@ export const polygonTool: AnnotationTool = {
 
     return {
       update: (cur) => poly(cur),
-      // Click always appends a vertex — closing is Enter-only. Clicking
-      // near the first vertex used to close but was error-prone (users
-      // placed points near their start and closed by accident).
       addPoint: (p) => {
+        // Clicking (or overlapping) the first vertex closes the polygon,
+        // as long as we have enough points to form an area.
+        if (
+          points.length >= MIN_POINTS &&
+          dist(p, points[0]) < CLOSE_ON_FIRST_DIST
+        ) {
+          return { done: true, shape: poly() };
+        }
         const last = points[points.length - 1];
         if (dist(p, last) < MIN_STEP) {
-          // coalesce duplicates: return the current preview without committing
+          // coalesce duplicates against the last vertex: keep preview,
+          // don't commit a micro-segment
           return { done: false, shape: poly(p) };
         }
         points.push({ x: p.x, y: p.y });

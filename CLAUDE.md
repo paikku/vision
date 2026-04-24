@@ -91,7 +91,7 @@ begin(start: Point): ShapeDraft
 
 현재 도구:
 - `rect` (단축키 R): 2-클릭, `MIN_SIZE = 0.0005`
-- `polygon` (단축키 P): N-클릭 꼭짓점 누적, **`Enter`로만 닫힘**(3점 이상 필요). 첫 꼭짓점 근처 클릭으로 닫는 shortcut 은 오인 클릭이 잦아 제거됨 — 클릭은 항상 새 vertex 추가. 연속 중복점은 `MIN_STEP = 0.001`로 억제. 이동은 모든 vertex translate, 리사이즈 핸들·vertex edit 은 follow-up
+- `polygon` (단축키 P): N-클릭 꼭짓점 누적, **`Enter` 또는 첫 vertex 클릭으로 닫힘**(3점 이상 필요). 첫 vertex 스냅 거리는 `CLOSE_ON_FIRST_DIST = 0.005`(≈ 첫 vertex dot 크기와 동일) — 일반적 클릭은 항상 새 vertex 추가, 의도적으로 첫 vertex 를 클릭해야 닫힘. 연속 중복점은 `MIN_STEP = 0.001`로 억제. Edit 모드에서는 모든 vertex 에 draggable 핸들.
 
 새 도구 추가 절차:
 1. `features/annotations/tools/` 하위에 `AnnotationTool` 구현

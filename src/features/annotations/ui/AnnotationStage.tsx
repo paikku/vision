@@ -556,6 +556,7 @@ function ShapeView({
   if (shape.kind === "polygon") {
     const d = polygonPath(shape.rings, { closed: !draft });
     if (!d) return null;
+    const canClose = draft && (shape.rings[0]?.length ?? 0) >= 3;
     return (
       <g
         data-annotation-interactive="true"
@@ -589,25 +590,30 @@ function ShapeView({
           />
         )}
         {/* Draft-only: dot the committed vertices so users see the path
-            they've built. Closing is Enter-only, so no "close near
-            first vertex" affordance needed.
+            they've built. Once the ring has ≥3 points, the first vertex
+            becomes a snap-close target (click it or press Enter) and is
+            rendered slightly larger + filled to advertise that.
             NOTE: r is in SVG user-space (viewBox 0..1). Keeping it ≪1
-            and dividing by zoom renders a ~4px visual dot at any zoom
+            and dividing by zoom renders a ~4-8px visual dot at any zoom
             level. Do NOT use pixel-sized numbers here — r=3 in this
             viewBox covers the entire frame. */}
-        {draft && shape.rings[0]?.map((p, i) => (
-          <circle
-            key={`d-${i}`}
-            cx={p.x}
-            cy={p.y}
-            r={0.004 / visualZoom}
-            fill="white"
-            stroke={klass.color}
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-            style={{ pointerEvents: "none" }}
-          />
-        ))}
+        {draft && shape.rings[0]?.map((p, i) => {
+          const isFirst = i === 0;
+          const highlight = isFirst && canClose;
+          return (
+            <circle
+              key={`d-${i}`}
+              cx={p.x}
+              cy={p.y}
+              r={(highlight ? 0.007 : 0.004) / visualZoom}
+              fill={highlight ? klass.color : "white"}
+              stroke={klass.color}
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+              style={{ pointerEvents: "none" }}
+            />
+          );
+        })}
         {/* Edit-mode vertex handles: one draggable dot per vertex on
             every ring (outer + holes). Each handle stops propagation so
             clicking a handle never also triggers the body-move gesture. */}
