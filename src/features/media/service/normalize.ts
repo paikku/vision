@@ -60,8 +60,24 @@ type FfmpegInstance = {
 type FfmpegModule = { FFmpeg: new () => FfmpegInstance };
 type FfmpegUtilModule = {
   fetchFile: (file: File | string) => Promise<Uint8Array>;
-  toBlobURL: (url: string, mimeType: string) => Promise<string>;
 };
+
+/**
+ * Base path where `scripts/copy-ffmpeg-assets.mjs` drops the three bundled
+ * dist trees. Kept as a same-origin absolute path so:
+ *
+ *   - the bundler can't statically resolve it (we still import at runtime),
+ *   - the browser can construct a Worker from it (cross-origin Worker is
+ *     rejected — this is why jsDelivr hosting fails in closed networks),
+ *   - and `new URL('./worker.js', import.meta.url)` inside the ffmpeg ESM
+ *     resolves back to /ffmpeg/ffmpeg/worker.js.
+ *
+ * Override with NEXT_PUBLIC_FFMPEG_BASE_URL if the app is reverse-proxied
+ * under a subpath or the assets are served from a sibling origin that
+ * already ships the right CORS headers.
+ */
+const FFMPEG_BASE_URL =
+  process.env.NEXT_PUBLIC_FFMPEG_BASE_URL?.replace(/\/+$/, "") || "/ffmpeg";
 
 class ServerNormalizeAdapter implements VideoNormalizeAdapter {
   name = "server" as const;
@@ -292,15 +308,18 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
  *
  * Key design points (all were sources of real-world failures):
  *
- * 1. We fetch `@ffmpeg/ffmpeg` + `@ffmpeg/util` + `@ffmpeg/core` straight from
- *    jsDelivr via a dynamic `import()` that hides from the Next.js bundler's
- *    static analysis. There is no npm install required.
+ * 1. We load `@ffmpeg/ffmpeg` + `@ffmpeg/util` + `@ffmpeg/core` from our own
+ *    origin (`/ffmpeg/...`) via a dynamic `import()` that hides from the
+ *    Next.js bundler's static analysis. The assets are copied into
+ *    `public/ffmpeg/` by `scripts/copy-ffmpeg-assets.mjs` on
+ *    postinstall/predev/prebuild. CDN hosting was tried first but
+ *    `new Worker(crossOriginURL)` is rejected by browsers, which breaks
+ *    the fallback entirely in closed networks.
  *
- * 2. `@ffmpeg/util.toBlobURL()` is used to pre-download `ffmpeg-core.js` and
- *    `ffmpeg-core.wasm` and expose them as same-origin `blob:` URLs. The
- *    ffmpeg worker fetches these via `importScripts` / dynamic `import()`,
- *    which historically hit CORS/MIME issues when left as cross-origin CDN
- *    URLs. Serving them as blobs sidesteps that entirely.
+ * 2. The coreURL/wasmURL we hand to `ffmpeg.load()` are plain same-origin
+ *    paths — no `toBlobURL` dance needed because there is no cross-origin
+ *    boundary anymore. Keeping them as real URLs (not blobs) also lets the
+ *    ESM core resolve its own `import.meta.url` correctly.
  *
  * 3. We register `ffmpeg.on("progress")` / `ffmpeg.on("log")` so the UI gets
  *    real progress (0..1) and the console gets a diagnostic trail when
@@ -424,31 +443,18 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
   }
 
   private async loadImpl() {
-    const FFMPEG_VERSION = "0.12.15";
-    const UTIL_VERSION = "0.12.2";
-    const CORE_VERSION = "0.12.10";
-
-    const ffmpegEsm = `https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${FFMPEG_VERSION}/dist/esm`;
-    const utilEsm = `https://cdn.jsdelivr.net/npm/@ffmpeg/util@${UTIL_VERSION}/dist/esm/index.js`;
-    const coreUmd = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${CORE_VERSION}/dist/umd`;
+    const base = resolveFfmpegBaseUrl();
 
     const [ffmpegMod, utilMod] = await Promise.all([
-      importFromUrl(`${ffmpegEsm}/index.js`) as Promise<FfmpegModule>,
-      importFromUrl(utilEsm) as Promise<FfmpegUtilModule>,
+      importFromUrl(`${base}/ffmpeg/index.js`) as Promise<FfmpegModule>,
+      importFromUrl(`${base}/util/index.js`) as Promise<FfmpegUtilModule>,
     ]);
 
     const { FFmpeg } = ffmpegMod;
-    const { toBlobURL, fetchFile } = utilMod;
+    const { fetchFile } = utilMod;
 
-    // Re-host the core on a same-origin blob URL. The worker (spawned by the
-    // FFmpeg class) then loads the core via importScripts/import() without
-    // tripping over CDN CORS quirks. The worker itself stays on the CDN —
-    // it's a module worker with relative internal imports that only resolve
-    // correctly when kept at its original URL.
-    const [coreURL, wasmURL] = await Promise.all([
-      toBlobURL(`${coreUmd}/ffmpeg-core.js`, "text/javascript"),
-      toBlobURL(`${coreUmd}/ffmpeg-core.wasm`, "application/wasm"),
-    ]);
+    const coreURL = `${base}/core/ffmpeg-core.js`;
+    const wasmURL = `${base}/core/ffmpeg-core.wasm`;
 
     const ffmpeg = new FFmpeg();
     ffmpeg.on?.("log", ({ message }) => {
@@ -466,6 +472,17 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
     this.ffmpeg = ffmpeg;
     this.fetchFile = fetchFile;
   }
+}
+
+function resolveFfmpegBaseUrl(): string {
+  // Absolute URLs (http/https) pass through verbatim — lets us point at a
+  // sibling host in environments that split static assets from the app.
+  if (/^https?:\/\//i.test(FFMPEG_BASE_URL)) return FFMPEG_BASE_URL;
+  // Resolve "/ffmpeg" (or custom subpath) against the current page origin.
+  if (typeof window !== "undefined") {
+    return new URL(FFMPEG_BASE_URL, window.location.href).toString().replace(/\/+$/, "");
+  }
+  return FFMPEG_BASE_URL;
 }
 
 /**

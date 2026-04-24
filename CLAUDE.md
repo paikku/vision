@@ -223,6 +223,8 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 - sprite/object URL은 cleanup에서 revoke해 메모리 누수 방지
 - 무거운 작업은 worker/헬퍼 함수로 분리해 UI 인터랙션 블로킹 방지
 - 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
+  - ffmpeg.wasm 에셋(`@ffmpeg/ffmpeg` + `@ffmpeg/util` + `@ffmpeg/core`)은 `scripts/copy-ffmpeg-assets.mjs`가 `postinstall`/`predev`/`prebuild`에서 `public/ffmpeg/`로 복사 → Next.js가 `/ffmpeg/...`로 same-origin 서빙. 폐쇄망 + `new Worker(crossOriginURL)` 차단 때문에 CDN 사용 불가. `public/ffmpeg/`는 gitignored.
+  - 서빙 경로 오버라이드: `NEXT_PUBLIC_FFMPEG_BASE_URL` (absolute URL 허용, 리버스 프록시 하위 경로 대응).
 - 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지)
 - 프레임 추출 컨트롤: `src/features/media/ui/frame-extract/ExtractionPanel.tsx`
 
