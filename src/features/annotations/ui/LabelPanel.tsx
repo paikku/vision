@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { segmentRegion, toShape } from "../service/segment";
+import { shapeAabb } from "../shape-utils";
 import { BulkApplyModal } from "./BulkApplyModal";
 import type { ClassShortcutKey } from "../types";
 
@@ -88,7 +89,7 @@ export function LabelPanel() {
     async (annotationId: string) => {
       const state = useStore.getState();
       const ann = state.annotations.find((a) => a.id === annotationId);
-      if (!ann || ann.shape.kind !== "rect") return;
+      if (!ann) return;
       const frame = state.frames.find((f) => f.id === ann.frameId);
       if (!frame) return;
       const klass = state.classes.find((c) => c.id === ann.classId);
@@ -106,7 +107,7 @@ export function LabelPanel() {
       try {
         const result = await segmentRegion(
           frame.url,
-          { bbox: ann.shape, classHint: klass?.name },
+          { bbox: shapeAabb(ann.shape), classHint: klass?.name },
           { signal: ctl.signal },
         );
         if (ctl.signal.aborted) return;

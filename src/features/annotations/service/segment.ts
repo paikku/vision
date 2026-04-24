@@ -1,20 +1,20 @@
-import type { RectShape, Shape } from "../types";
+import type { PolygonShape, RectShape, Shape } from "../types";
+import { shapeAabb } from "../shape-utils";
 
 /**
  * Segmentation service — refines an annotation region into a tighter
  * object boundary using a server-side model.
  *
- * The response schema is intentionally polymorphic so that today's
- * rect-only shape union can be upgraded to polygon/mask without
- * changing the network contract:
+ * The response carries both representations so the client can pick the
+ * richer one it supports:
  *
  *   - `polygon` : array of rings (outer + optional holes), normalized [0..1]
  *   - `rect`    : tight axis-aligned bbox, normalized [0..1]
  *
- * Callers that only support rect should call `toRectShape(result)`,
- * which picks the rect when present and otherwise collapses the
- * polygon to its AABB. Once a polygon `Shape` variant is added, the
- * caller can branch on `result.polygon` directly.
+ * Today both are rendered: `toShape()` returns a polygon when present
+ * and otherwise falls back to a rect. Callers that specifically want
+ * a rect (e.g. to feed rect-only downstream code) can call
+ * `toRectShape()`.
  */
 
 export type NormalizedPoint = { x: number; y: number };
@@ -239,18 +239,40 @@ function ringsAabb(
   return { x: minX, y: minY, w, h };
 }
 
-/**
- * Collapse a segment result into today's rect-only Shape union.
- *
- * When a polygon variant is added to `Shape`, prefer a dedicated
- * converter (e.g. `toPolygonShape`) and branch on `result.polygon`
- * before falling through to this helper.
- */
+/** Force the rect representation — useful for rect-only downstream code. */
 export function toRectShape(result: SegmentResult): RectShape {
   return { kind: "rect", ...result.rect };
 }
 
-/** Convenience: picks the best representable shape for today's union. */
+/**
+ * Force the polygon representation. Returns `null` when the server did
+ * not return rings (e.g. model only produced a bbox).
+ */
+export function toPolygonShape(result: SegmentResult): PolygonShape | null {
+  if (!result.polygon || result.polygon.length === 0) return null;
+  return {
+    kind: "polygon",
+    rings: result.polygon.map((ring) =>
+      ring.map((p) => ({ x: p.x, y: p.y })),
+    ),
+  };
+}
+
+/**
+ * Picks the richest representable shape: polygon when present, rect
+ * otherwise. This is what callers typically want.
+ */
 export function toShape(result: SegmentResult): Shape {
-  return toRectShape(result);
+  return toPolygonShape(result) ?? toRectShape(result);
+}
+
+/** AABB of a segment result, for servers/callers that want the bbox directly. */
+export function segmentAabb(result: SegmentResult): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const poly = toPolygonShape(result);
+  return poly ? shapeAabb(poly) : result.rect;
 }
