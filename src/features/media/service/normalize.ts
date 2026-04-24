@@ -83,7 +83,7 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
   name = "server" as const;
 
   async normalize(file: File, opts?: NormalizeOptions): Promise<File | null> {
-    const endpoint = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT;
+    const endpoint = resolveServerEndpoint();
     if (!endpoint) return null;
 
     return new Promise<File | null>((resolve) => {
@@ -471,6 +471,26 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
 
     this.ffmpeg = ffmpeg;
     this.fetchFile = fetchFile;
+  }
+}
+
+/**
+ * Validate the server normalize endpoint and resolve it against the current
+ * origin. XMLHttpRequest.open throws a SyntaxError on any string that the
+ * URL parser can't resolve (e.g. whitespace, bare hostnames without a scheme,
+ * the literal "undefined"), which used to blow up the whole normalize
+ * pipeline before the ffmpeg.wasm fallback had a chance to run. Returning
+ * `null` here lets the caller skip this adapter cleanly.
+ */
+function resolveServerEndpoint(): string | null {
+  const raw = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT?.trim();
+  if (!raw) return null;
+  try {
+    const base =
+      typeof window !== "undefined" ? window.location.href : "http://localhost/";
+    return new URL(raw, base).toString();
+  } catch {
+    return null;
   }
 }
 
