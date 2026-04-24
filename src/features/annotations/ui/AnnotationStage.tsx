@@ -391,8 +391,8 @@ export function AnnotationStage() {
                 };
               return (
                 <>
-                  <Handle x={s.x} y={s.y} color={klass.color} zoom={zoom} cursor="nwse-resize" onPointerDown={startCorner("tl")} />
-                  <Handle x={s.x + s.w} y={s.y + s.h} color={klass.color} zoom={zoom} cursor="nwse-resize" onPointerDown={startCorner("br")} />
+                  <Handle x={s.x} y={s.y} color={klass.color} zoom={zoom} onPointerDown={startCorner("tl")} />
+                  <Handle x={s.x + s.w} y={s.y + s.h} color={klass.color} zoom={zoom} onPointerDown={startCorner("br")} />
                 </>
               );
             }
@@ -406,7 +406,6 @@ export function AnnotationStage() {
                     y={p.y}
                     color={klass.color}
                     zoom={zoom}
-                    cursor="grab"
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       e.preventDefault();
@@ -696,14 +695,12 @@ function Handle({
   y,
   color,
   zoom,
-  cursor,
   onPointerDown,
 }: {
   x: number;
   y: number;
   color: string;
   zoom: number;
-  cursor: "nwse-resize" | "grab";
   onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const visualZoom = Math.max(0.25, zoom);
@@ -724,7 +721,7 @@ function Handle({
         boxShadow: "0 0 0 1px rgba(0,0,0,0.35)",
         transform: `translate(-50%, -50%) scale(${1 / visualZoom})`,
         transformOrigin: "center",
-        cursor,
+        cursor: "pointer",
         touchAction: "none",
       }}
     />
