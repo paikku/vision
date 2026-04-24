@@ -2,6 +2,26 @@ import type { PolygonShape, RectShape, Shape } from "../types";
 import { shapeAabb } from "../shape-utils";
 
 /**
+ * Backend segmentation models the frontend knows how to ask for.
+ * The server advertises and dispatches to these via the `model` form
+ * field. Keep this list in sync with `BACKEND_SEGMENT_REQUIREMENTS.md §2`.
+ */
+export const SEGMENT_MODELS = [
+  { id: "sam3", label: "SAM 3" },
+  { id: "sam2", label: "SAM 2" },
+  { id: "sam", label: "SAM (v1)" },
+  { id: "mask2former", label: "Mask2Former" },
+  { id: "mask-rcnn", label: "Mask R-CNN" },
+] as const;
+
+export type SegmentModelId = (typeof SEGMENT_MODELS)[number]["id"];
+export const DEFAULT_SEGMENT_MODEL: SegmentModelId = "sam3";
+
+export function isSegmentModelId(v: string): v is SegmentModelId {
+  return SEGMENT_MODELS.some((m) => m.id === v);
+}
+
+/**
  * Segmentation service — refines an annotation region into a tighter
  * object boundary using a server-side model.
  *
@@ -27,6 +47,8 @@ export type SegmentRegionHint = {
   bbox: { x: number; y: number; w: number; h: number };
   /** Optional hint classes (e.g. class name) for models that accept it. */
   classHint?: string;
+  /** Which backend model to dispatch to. Defaults to DEFAULT_SEGMENT_MODEL. */
+  model?: SegmentModelId;
 };
 
 export type SegmentResult = {
@@ -109,6 +131,7 @@ export async function segmentRegion(
   const form = new FormData();
   form.append("file", imageBlob, "frame.jpg");
   form.append("region", JSON.stringify(hint.bbox));
+  form.append("model", hint.model ?? DEFAULT_SEGMENT_MODEL);
   if (hint.classHint) form.append("classHint", hint.classHint);
 
   let resp: Response;

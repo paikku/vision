@@ -33,6 +33,7 @@
 | Content-Type | `multipart/form-data` |
 | `file` | 대상 프레임 JPEG/PNG 바이트 (단일 이미지) |
 | `region` | JSON 문자열, `{ "x": number, "y": number, "w": number, "h": number }` — **정규화 좌표** `[0..1]`. 현재 라벨 shape 의 AABB(직사각형이면 그대로, 폴리곤이면 꼭짓점 AABB) 가 전달됨 |
+| `model` | string. 아래 §2.2 의 모델 id 중 하나. 프런트가 **항상** 전송 (기본값 `sam3`) |
 | `classHint` *(optional)* | 현재 라벨 클래스 이름 (string). class-conditional 모델용 힌트 |
 
 ### 2.1 CORS / 크기 / 타임아웃
@@ -40,7 +41,36 @@
 - 브라우저 직업로드 대상이므로 정규화 엔드포인트와 동일한 CORS 설정 필요.
 - 프레임 1장이므로 페이로드는 보통 수백 KB. `client_max_body_size 16M`
   수준이면 충분.
-- 모델 추론 시간 고려해 `proxy_read_timeout 60s` 권장.
+- 모델 추론 시간 고려해 `proxy_read_timeout 60s` 권장 (무거운 모델은
+  `proxy_read_timeout` 을 더 길게).
+
+### 2.2 지원 모델 (`model` 필드)
+
+프런트가 사용자에게 노출하는 모델 선택지는 다음과 같다. 각 id 는
+`src/features/annotations/service/segment.ts::SEGMENT_MODELS` 와 동기화되어
+있어야 하며, 이 목록이 곧 **서버가 허용해야 할 enum** 이다.
+
+| `model` id | 라벨 (UI) | 설명 / 백엔드 구현 가이드 |
+|---|---|---|
+| `sam3` | SAM 3 | Meta SAM 3. 기본값. bbox prompt 지원. |
+| `sam2` | SAM 2 | Meta SAM 2. 비디오·이미지 공용, bbox prompt. |
+| `sam` | SAM (v1) | 원본 Segment Anything. bbox prompt, 구형 체크포인트 fallback 용. |
+| `mask2former` | Mask2Former | panoptic/instance 세그먼테이션. `classHint` 를 class id 로 매핑하여 해당 클래스에 한정. |
+| `mask-rcnn` | Mask R-CNN | detection 베이스라인. bbox 내부에서 top-1 인스턴스 선택. |
+
+**서버 동작 요구**:
+
+1. `model` 값이 위 enum 에 없으면 `400 Bad Request` + `{ "error":
+   "unsupported model" }`. 프런트는 조용히 no-op 처리하지만 운영 로그
+   확인용으로 메시지를 남길 것.
+2. 모든 모델은 **동일한 응답 스키마**(§3) 를 반환한다. 내부 구현이 mask
+   만 출력하는 경우라도 서버가 polygon 으로 변환해서 응답.
+3. 모델별 추론 시간 차이가 큰 경우 (`mask2former`, `sam3` 은 수 초 소요
+   가능), `proxy_read_timeout` / 워커 큐 타임아웃을 모델 단위로 설정.
+4. 신규 모델을 추가·교체할 때는 프런트 `SEGMENT_MODELS` 목록도 함께
+   업데이트해야 사용자에게 노출된다 (계약 변경).
+5. 기본값 (`sam3`) 은 서버 정책에 따라 바꿀 수 있지만, 프런트도 같이
+   `DEFAULT_SEGMENT_MODEL` 을 갱신할 것.
 
 ---
 
@@ -116,6 +146,7 @@
 |---|---|---|
 | `file` 누락 / 이미지 디코딩 실패 | `400 Bad Request` | 조용히 실패 → 라벨 유지 |
 | `region` 파싱 실패, 범위 초과 | `400 Bad Request` + `{error}` | 동일 |
+| 지원하지 않는 `model` id | `400 Bad Request` + `{"error":"unsupported model"}` | 동일 (no-op) |
 | 지원하지 않는 이미지 포맷 | `415 Unsupported Media Type` | 동일 |
 | 모델이 아무것도 찾지 못함 | `200 OK` + `{}` 또는 `404` | 라벨 유지 (no-op) |
 | 일시적 리소스 부족 | `503` + `Retry-After` | 라벨 유지 (현재 재시도 없음) |
@@ -156,6 +187,7 @@
 curl -X POST "$SEGMENT_URL" \
   -F "file=@frame.jpg" \
   -F 'region={"x":0.4,"y":0.2,"w":0.2,"h":0.3}' \
+  -F "model=sam3" \
   -F "classHint=person"
 ```
 
@@ -213,7 +245,12 @@ curl -X POST "$SEGMENT_URL" \
 - [x] `features/annotations/ui/AnnotationStage.tsx` — `<path fillRule=evenodd>`
       로 polygon 렌더, 이동·hover·라벨 위치 모두 AABB/폴리곤 유틸 경유
 - [x] `features/annotations/ui/LabelPanel.tsx` — rect-only 가드 해제,
-      폴리곤 annotation 도 `H` 로 재-세그먼트 가능
+      폴리곤 annotation 도 `H` 로 재-세그먼트 가능. Shortcuts 섹션에
+      모델 `<select>` 노출 (store `segmentModel` 과 연동)
+- [x] `features/annotations/slice.ts` — `segmentModel` / `setSegmentModel`
+      상태 + 기본값 `DEFAULT_SEGMENT_MODEL`
+- [x] `features/annotations/service/segment.ts` — `SEGMENT_MODELS` 목록,
+      `model` form 필드 항상 전송
 - [x] `src/components/ProjectDetailPage.tsx` — 프레임 프리뷰에 polygon 렌더
 - [x] `src/lib/server/storage.ts` — `StoredPolygonShape` 로 data.json 왕복
 - [ ] (follow-up) 폴리곤 **drawing tool**: 현재는 drawing tool 이 rect 하나뿐.

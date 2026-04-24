@@ -1,4 +1,5 @@
 import type { StateCreator } from "zustand";
+import { DEFAULT_SEGMENT_MODEL, type SegmentModelId } from "./service/segment";
 import type {
   Annotation,
   ClassShortcutKey,
@@ -28,6 +29,7 @@ export type AnnotationsSlice = {
   hoveredAnnotationId: string | null;
   activeToolId: ToolId;
   interactionMode: "draw" | "edit";
+  segmentModel: SegmentModelId;
 
   addClass: (name?: string) => LabelClass;
   removeClass: (id: string) => void;
@@ -44,6 +46,7 @@ export type AnnotationsSlice = {
 
   setActiveTool: (id: ToolId) => void;
   setInteractionMode: (mode: "draw" | "edit") => void;
+  setSegmentModel: (id: SegmentModelId) => void;
 };
 
 export const createAnnotationsSlice: StateCreator<
@@ -59,6 +62,7 @@ export const createAnnotationsSlice: StateCreator<
   hoveredAnnotationId: null,
   activeToolId: "rect",
   interactionMode: "draw",
+  segmentModel: DEFAULT_SEGMENT_MODEL,
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -132,4 +136,5 @@ export const createAnnotationsSlice: StateCreator<
 
   setActiveTool: (id) => set({ activeToolId: id }),
   setInteractionMode: (interactionMode) => set({ interactionMode }),
+  setSegmentModel: (segmentModel) => set({ segmentModel }),
 });

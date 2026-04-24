@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { segmentRegion, toShape } from "../service/segment";
+import {
+  SEGMENT_MODELS,
+  isSegmentModelId,
+  segmentRegion,
+  toShape,
+} from "../service/segment";
 import { shapeAabb } from "../shape-utils";
 import { BulkApplyModal } from "./BulkApplyModal";
 import type { ClassShortcutKey } from "../types";
@@ -44,6 +49,8 @@ export function LabelPanel() {
   const setHoveredAnnotation = useStore((s) => s.setHoveredAnnotation);
   const addAnnotation = useStore((s) => s.addAnnotation);
   const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
+  const segmentModel = useStore((s) => s.segmentModel);
+  const setSegmentModel = useStore((s) => s.setSegmentModel);
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -107,7 +114,11 @@ export function LabelPanel() {
       try {
         const result = await segmentRegion(
           frame.url,
-          { bbox: shapeAabb(ann.shape), classHint: klass?.name },
+          {
+            bbox: shapeAabb(ann.shape),
+            classHint: klass?.name,
+            model: useStore.getState().segmentModel,
+          },
           { signal: ctl.signal },
         );
         if (ctl.signal.aborted) return;
@@ -379,7 +390,22 @@ export function LabelPanel() {
         <ul className="space-y-1 text-xs text-[var(--color-muted)]">
           <li><Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class</li>
           <li>hover annotation + <Key>Q</Key>–<Key>R</Key> change class</li>
-          <li>hover annotation + <Key>H</Key> refine by segmentation</li>
+          <li className="flex items-center gap-1.5">
+            <span>hover annotation + <Key>H</Key> refine by</span>
+            <select
+              value={segmentModel}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (isSegmentModelId(v)) setSegmentModel(v);
+              }}
+              title="Backend segmentation model"
+              className="rounded border border-[var(--color-line)] bg-[var(--color-surface-2)] px-1 py-0.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+            >
+              {SEGMENT_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </li>
           <li><Key>D</Key> delete selected / hovered box</li>
           <li><Key>R</Key> rect tool · <Key>P</Key> polygon tool</li>
           <li>polygon: click vertices, <Key>Enter</Key> to close (≥3 points)</li>
