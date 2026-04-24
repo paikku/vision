@@ -110,25 +110,28 @@ export function AnnotationStage() {
         startShape: Shape;
       }
     | {
-        mode: "resize";
+        mode: "resize-rect";
         annotationId: string;
+        corner: "tl" | "br";
         startClientX: number;
         startClientY: number;
         hasMoved: boolean;
         startShape: { kind: "rect"; x: number; y: number; w: number; h: number };
       }
+    | {
+        mode: "resize-vertex";
+        annotationId: string;
+        ringIndex: number;
+        vertexIndex: number;
+        startClientX: number;
+        startClientY: number;
+        hasMoved: boolean;
+        startShape: Extract<Shape, { kind: "polygon" }>;
+      }
   >(null);
 
   const DRAG_ACTIVATE_DISTANCE_PX = 2;
-
-  // Resize: enforce minimum size, keep top-left fixed. Rect only — polygon
-  // resize would need per-vertex handles and is out of scope for this pass.
-  const clampResize = useCallback((x: number, y: number, w: number, h: number) => {
-    const minSize = 0.0005;
-    const nextW = Math.max(minSize, Math.min(1 - x, w));
-    const nextH = Math.max(minSize, Math.min(1 - y, h));
-    return { x, y, w: nextW, h: nextH };
-  }, []);
+  const RECT_MIN_SIZE = 0.0005;
 
   if (!frame) {
     return (
@@ -180,16 +183,54 @@ export function AnnotationStage() {
     }
     const dx = rawDx / (fitState.width * zoom);
     const dy = rawDy / (fitState.height * zoom);
+
     if (drag.mode === "move") {
       updateAnnotation(active.id, {
         shape: translateShape(drag.startShape, dx, dy),
       });
       return;
     }
-    // resize — rect only
-    const start = drag.startShape;
-    const next = clampResize(start.x, start.y, start.w + dx, start.h + dy);
-    updateAnnotation(active.id, { shape: { kind: "rect", ...next } });
+
+    if (drag.mode === "resize-rect") {
+      const s = drag.startShape;
+      if (drag.corner === "br") {
+        // Top-left fixed; bottom-right follows cursor.
+        const w = Math.max(RECT_MIN_SIZE, Math.min(1 - s.x, s.w + dx));
+        const h = Math.max(RECT_MIN_SIZE, Math.min(1 - s.y, s.h + dy));
+        updateAnnotation(active.id, {
+          shape: { kind: "rect", x: s.x, y: s.y, w, h },
+        });
+      } else {
+        // Bottom-right fixed; top-left follows cursor.
+        const brX = s.x + s.w;
+        const brY = s.y + s.h;
+        const nx = Math.max(0, Math.min(brX - RECT_MIN_SIZE, s.x + dx));
+        const ny = Math.max(0, Math.min(brY - RECT_MIN_SIZE, s.y + dy));
+        updateAnnotation(active.id, {
+          shape: { kind: "rect", x: nx, y: ny, w: brX - nx, h: brY - ny },
+        });
+      }
+      return;
+    }
+
+    if (drag.mode === "resize-vertex") {
+      const s = drag.startShape;
+      const ri = drag.ringIndex;
+      const vi = drag.vertexIndex;
+      const rings = s.rings.map((ring, r) =>
+        r !== ri
+          ? ring
+          : ring.map((p, v) =>
+              v !== vi
+                ? p
+                : {
+                    x: Math.max(0, Math.min(1, p.x + dx)),
+                    y: Math.max(0, Math.min(1, p.y + dy)),
+                  },
+            ),
+      );
+      updateAnnotation(active.id, { shape: { kind: "polygon", rings } });
+    }
   };
 
   const onEditStagePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -306,15 +347,34 @@ export function AnnotationStage() {
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
                   } : undefined}
-                  onStartResize={isEditMode && a.shape.kind === "rect" ? (e) => {
+                  onStartRectCornerDrag={isEditMode && a.shape.kind === "rect" ? (corner, e) => {
                     if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
                     selectAnnotation(a.id);
                     setHoveredHandleAnnotationId(a.id);
                     dragRef.current = {
-                      mode: "resize",
+                      mode: "resize-rect",
                       annotationId: a.id,
+                      corner,
+                      startClientX: e.clientX,
+                      startClientY: e.clientY,
+                      hasMoved: false,
+                      startShape: a.shape,
+                    };
+                    stageRef.current?.setPointerCapture(e.pointerId);
+                  } : undefined}
+                  onStartVertexDrag={isEditMode && a.shape.kind === "polygon" ? (ringIndex, vertexIndex, e) => {
+                    if (a.shape.kind !== "polygon") return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                    selectAnnotation(a.id);
+                    setHoveredHandleAnnotationId(a.id);
+                    dragRef.current = {
+                      mode: "resize-vertex",
+                      annotationId: a.id,
+                      ringIndex,
+                      vertexIndex,
                       startClientX: e.clientX,
                       startClientY: e.clientY,
                       hasMoved: false,
@@ -463,7 +523,8 @@ function ShapeView({
   onPointerEnter,
   onPointerLeave,
   onStartMove,
-  onStartResize,
+  onStartRectCornerDrag,
+  onStartVertexDrag,
   showHandle,
   zoom,
 }: {
@@ -476,7 +537,15 @@ function ShapeView({
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
   onStartMove?: (e: ReactPointerEvent<SVGGElement>) => void;
-  onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
+  onStartRectCornerDrag?: (
+    corner: "tl" | "br",
+    e: ReactPointerEvent<SVGCircleElement>,
+  ) => void;
+  onStartVertexDrag?: (
+    ringIndex: number,
+    vertexIndex: number,
+    e: ReactPointerEvent<SVGCircleElement>,
+  ) => void;
   showHandle?: boolean;
   zoom: number;
 }) {
@@ -528,7 +597,7 @@ function ShapeView({
             viewBox covers the entire frame. */}
         {draft && shape.rings[0]?.map((p, i) => (
           <circle
-            key={i}
+            key={`d-${i}`}
             cx={p.x}
             cy={p.y}
             r={0.004 / visualZoom}
@@ -539,16 +608,31 @@ function ShapeView({
             style={{ pointerEvents: "none" }}
           />
         ))}
+        {/* Edit-mode vertex handles: one draggable dot per vertex on
+            every ring (outer + holes). Each handle stops propagation so
+            clicking a handle never also triggers the body-move gesture. */}
+        {showHandle && !draft && shape.rings.flatMap((ring, ri) =>
+          ring.map((p, vi) => (
+            <circle
+              key={`h-${ri}-${vi}`}
+              data-annotation-interactive="true"
+              cx={p.x}
+              cy={p.y}
+              r={0.007 / visualZoom}
+              fill="white"
+              stroke={klass.color}
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+              onPointerDown={onStartVertexDrag ? (e) => onStartVertexDrag(ri, vi, e) : undefined}
+              style={{ cursor: onStartVertexDrag ? "move" : undefined }}
+            />
+          )),
+        )}
       </g>
     );
   }
 
   if (shape.kind === "rect") {
-    // Hit area: ~20 screen-pixels regardless of zoom, capped to 45% of shape.
-    // 0.025/zoom converts to a constant visual pixel size (assuming ~800px stage).
-    const hitNorm = Math.min(0.06, 0.055 / zoom);
-    const hitWidth = Math.min(shape.w * 0.45, hitNorm);
-    const hitHeight = Math.min(shape.h * 0.45, hitNorm);
     return (
       <g
         data-annotation-interactive="true"
@@ -584,18 +668,35 @@ function ShapeView({
             style={{ pointerEvents: "none" }}
           />
         )}
-        {/* Resize hit area (no visual, cursor only) */}
+        {/* Edit-mode corner handles: top-left + bottom-right. Drag TL to
+            resize keeping BR fixed, drag BR to resize keeping TL fixed. */}
         {showHandle && !draft && (
-          <rect
-            x={shape.x + shape.w - hitWidth}
-            y={shape.y + shape.h - hitHeight}
-            width={hitWidth}
-            height={hitHeight}
-            fill="transparent"
-            onPointerDown={onStartResize}
-            data-annotation-interactive="true"
-            style={{ cursor: "nwse-resize" }}
-          />
+          <>
+            <circle
+              data-annotation-interactive="true"
+              cx={shape.x}
+              cy={shape.y}
+              r={0.008 / visualZoom}
+              fill="white"
+              stroke={klass.color}
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+              onPointerDown={onStartRectCornerDrag ? (e) => onStartRectCornerDrag("tl", e) : undefined}
+              style={{ cursor: "nwse-resize" }}
+            />
+            <circle
+              data-annotation-interactive="true"
+              cx={shape.x + shape.w}
+              cy={shape.y + shape.h}
+              r={0.008 / visualZoom}
+              fill="white"
+              stroke={klass.color}
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+              onPointerDown={onStartRectCornerDrag ? (e) => onStartRectCornerDrag("br", e) : undefined}
+              style={{ cursor: "nwse-resize" }}
+            />
+          </>
         )}
       </g>
     );
