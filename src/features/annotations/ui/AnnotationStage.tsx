@@ -332,7 +332,6 @@ export function AnnotationStage() {
                     e.stopPropagation();
                     selectAnnotation(a.id);
                   } : undefined}
-                  showHandle={isEditMode && a.id === selectedAnnotationId}
                   onStartMove={isEditMode ? (e) => {
                     e.stopPropagation();
                     e.preventDefault();
@@ -340,41 +339,6 @@ export function AnnotationStage() {
                     dragRef.current = {
                       mode: "move",
                       annotationId: a.id,
-                      startClientX: e.clientX,
-                      startClientY: e.clientY,
-                      hasMoved: false,
-                      startShape: a.shape,
-                    };
-                    stageRef.current?.setPointerCapture(e.pointerId);
-                  } : undefined}
-                  onStartRectCornerDrag={isEditMode && a.shape.kind === "rect" ? (corner, e) => {
-                    if (a.shape.kind !== "rect") return;
-                    e.stopPropagation();
-                    e.preventDefault();
-                    selectAnnotation(a.id);
-                    setHoveredHandleAnnotationId(a.id);
-                    dragRef.current = {
-                      mode: "resize-rect",
-                      annotationId: a.id,
-                      corner,
-                      startClientX: e.clientX,
-                      startClientY: e.clientY,
-                      hasMoved: false,
-                      startShape: a.shape,
-                    };
-                    stageRef.current?.setPointerCapture(e.pointerId);
-                  } : undefined}
-                  onStartVertexDrag={isEditMode && a.shape.kind === "polygon" ? (ringIndex, vertexIndex, e) => {
-                    if (a.shape.kind !== "polygon") return;
-                    e.stopPropagation();
-                    e.preventDefault();
-                    selectAnnotation(a.id);
-                    setHoveredHandleAnnotationId(a.id);
-                    dragRef.current = {
-                      mode: "resize-vertex",
-                      annotationId: a.id,
-                      ringIndex,
-                      vertexIndex,
                       startClientX: e.clientX,
                       startClientY: e.clientY,
                       hasMoved: false,
@@ -396,6 +360,102 @@ export function AnnotationStage() {
               />
             )}
           </svg>
+
+          {/* Edit-mode resize/vertex handles — rendered as HTML so they're
+              always circular (the SVG above uses preserveAspectRatio="none"
+              which distorts <circle>) and get native cursor feedback. */}
+          {isEditMode && selectedAnnotationId && (() => {
+            const a = frameAnnotations.find((x) => x.id === selectedAnnotationId);
+            if (!a) return null;
+            const klass = classes.find((c) => c.id === a.classId);
+            if (!klass) return null;
+            if (a.shape.kind === "rect") {
+              const s = a.shape;
+              const startCorner = (corner: "tl" | "br") =>
+                (e: ReactPointerEvent<HTMLDivElement>) => {
+                  if (a.shape.kind !== "rect") return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                  selectAnnotation(a.id);
+                  setHoveredHandleAnnotationId(a.id);
+                  dragRef.current = {
+                    mode: "resize-rect",
+                    annotationId: a.id,
+                    corner,
+                    startClientX: e.clientX,
+                    startClientY: e.clientY,
+                    hasMoved: false,
+                    startShape: a.shape,
+                  };
+                  stageRef.current?.setPointerCapture(e.pointerId);
+                };
+              return (
+                <>
+                  <Handle x={s.x} y={s.y} color={klass.color} zoom={zoom} cursor="nwse-resize" onPointerDown={startCorner("tl")} />
+                  <Handle x={s.x + s.w} y={s.y + s.h} color={klass.color} zoom={zoom} cursor="nwse-resize" onPointerDown={startCorner("br")} />
+                </>
+              );
+            }
+            if (a.shape.kind === "polygon") {
+              const shape = a.shape;
+              return shape.rings.flatMap((ring, ri) =>
+                ring.map((p, vi) => (
+                  <Handle
+                    key={`${ri}-${vi}`}
+                    x={p.x}
+                    y={p.y}
+                    color={klass.color}
+                    zoom={zoom}
+                    cursor="grab"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      selectAnnotation(a.id);
+                      setHoveredHandleAnnotationId(a.id);
+                      dragRef.current = {
+                        mode: "resize-vertex",
+                        annotationId: a.id,
+                        ringIndex: ri,
+                        vertexIndex: vi,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        hasMoved: false,
+                        startShape: shape,
+                      };
+                      stageRef.current?.setPointerCapture(e.pointerId);
+                    }}
+                  />
+                )),
+              );
+            }
+            return null;
+          })()}
+
+          {/* Draft polygon vertex dots — non-interactive, also HTML to
+              stay circular. The first vertex is enlarged + filled once
+              the ring is closable (≥3 points) so the snap-close target
+              is visible. */}
+          {draftShape?.kind === "polygon" && (() => {
+            const cls = classes.find((c) => c.id === activeClassId) ?? classes[0];
+            if (!cls) return null;
+            const ring = draftShape.rings[0] ?? [];
+            const canClose = ring.length >= 3;
+            return ring.map((p, i) => {
+              const isFirst = i === 0;
+              const highlight = isFirst && canClose;
+              return (
+                <Dot
+                  key={i}
+                  x={p.x}
+                  y={p.y}
+                  zoom={zoom}
+                  size={highlight ? 11 : 7}
+                  fill={highlight ? cls.color : "white"}
+                  stroke={cls.color}
+                />
+              );
+            });
+          })()}
 
           {/* Label overlays — outside AABB, top-right corner, no background.
               transform: scale(1/zoom) counteracts the parent stageRef scale so the
@@ -523,9 +583,6 @@ function ShapeView({
   onPointerEnter,
   onPointerLeave,
   onStartMove,
-  onStartRectCornerDrag,
-  onStartVertexDrag,
-  showHandle,
   zoom,
 }: {
   shape: Shape;
@@ -537,16 +594,6 @@ function ShapeView({
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
   onStartMove?: (e: ReactPointerEvent<SVGGElement>) => void;
-  onStartRectCornerDrag?: (
-    corner: "tl" | "br",
-    e: ReactPointerEvent<SVGCircleElement>,
-  ) => void;
-  onStartVertexDrag?: (
-    ringIndex: number,
-    vertexIndex: number,
-    e: ReactPointerEvent<SVGCircleElement>,
-  ) => void;
-  showHandle?: boolean;
   zoom: number;
 }) {
   const visualZoom = Math.max(0.25, zoom);
@@ -556,7 +603,9 @@ function ShapeView({
   if (shape.kind === "polygon") {
     const d = polygonPath(shape.rings, { closed: !draft });
     if (!d) return null;
-    const canClose = draft && (shape.rings[0]?.length ?? 0) >= 3;
+    // Handle and vertex-dot rendering live outside the SVG — see
+    // AnnotationStage for the HTML overlay. The SVG here only paints
+    // the shape body + an optional hover glow.
     return (
       <g
         data-annotation-interactive="true"
@@ -588,51 +637,6 @@ function ShapeView({
             vectorEffect="non-scaling-stroke"
             style={{ pointerEvents: "none" }}
           />
-        )}
-        {/* Draft-only: dot the committed vertices so users see the path
-            they've built. Once the ring has ≥3 points, the first vertex
-            becomes a snap-close target (click it or press Enter) and is
-            rendered slightly larger + filled to advertise that.
-            NOTE: r is in SVG user-space (viewBox 0..1). Keeping it ≪1
-            and dividing by zoom renders a ~4-8px visual dot at any zoom
-            level. Do NOT use pixel-sized numbers here — r=3 in this
-            viewBox covers the entire frame. */}
-        {draft && shape.rings[0]?.map((p, i) => {
-          const isFirst = i === 0;
-          const highlight = isFirst && canClose;
-          return (
-            <circle
-              key={`d-${i}`}
-              cx={p.x}
-              cy={p.y}
-              r={(highlight ? 0.007 : 0.004) / visualZoom}
-              fill={highlight ? klass.color : "white"}
-              stroke={klass.color}
-              strokeWidth={1.5}
-              vectorEffect="non-scaling-stroke"
-              style={{ pointerEvents: "none" }}
-            />
-          );
-        })}
-        {/* Edit-mode vertex handles: one draggable dot per vertex on
-            every ring (outer + holes). Each handle stops propagation so
-            clicking a handle never also triggers the body-move gesture. */}
-        {showHandle && !draft && shape.rings.flatMap((ring, ri) =>
-          ring.map((p, vi) => (
-            <circle
-              key={`h-${ri}-${vi}`}
-              data-annotation-interactive="true"
-              cx={p.x}
-              cy={p.y}
-              r={0.007 / visualZoom}
-              fill="white"
-              stroke={klass.color}
-              strokeWidth={1.5}
-              vectorEffect="non-scaling-stroke"
-              onPointerDown={onStartVertexDrag ? (e) => onStartVertexDrag(ri, vi, e) : undefined}
-              style={{ cursor: onStartVertexDrag ? "move" : undefined }}
-            />
-          )),
         )}
       </g>
     );
@@ -674,40 +678,92 @@ function ShapeView({
             style={{ pointerEvents: "none" }}
           />
         )}
-        {/* Edit-mode corner handles: top-left + bottom-right. Drag TL to
-            resize keeping BR fixed, drag BR to resize keeping TL fixed. */}
-        {showHandle && !draft && (
-          <>
-            <circle
-              data-annotation-interactive="true"
-              cx={shape.x}
-              cy={shape.y}
-              r={0.008 / visualZoom}
-              fill="white"
-              stroke={klass.color}
-              strokeWidth={1.5}
-              vectorEffect="non-scaling-stroke"
-              onPointerDown={onStartRectCornerDrag ? (e) => onStartRectCornerDrag("tl", e) : undefined}
-              style={{ cursor: "nwse-resize" }}
-            />
-            <circle
-              data-annotation-interactive="true"
-              cx={shape.x + shape.w}
-              cy={shape.y + shape.h}
-              r={0.008 / visualZoom}
-              fill="white"
-              stroke={klass.color}
-              strokeWidth={1.5}
-              vectorEffect="non-scaling-stroke"
-              onPointerDown={onStartRectCornerDrag ? (e) => onStartRectCornerDrag("br", e) : undefined}
-              style={{ cursor: "nwse-resize" }}
-            />
-          </>
-        )}
       </g>
     );
   }
   return null;
+}
+
+/**
+ * Interactive edit-mode handle. Rendered as HTML so it's always a
+ * perfect circle at any frame aspect ratio and supports native cursor
+ * feedback (resize / grab). Positioned at normalized (x, y) within the
+ * stageRef's aspect-fitted container; counter-scaled by 1/zoom so the
+ * visual size stays constant across zoom levels.
+ */
+function Handle({
+  x,
+  y,
+  color,
+  zoom,
+  cursor,
+  onPointerDown,
+}: {
+  x: number;
+  y: number;
+  color: string;
+  zoom: number;
+  cursor: "nwse-resize" | "grab";
+  onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  const visualZoom = Math.max(0.25, zoom);
+  const SIZE = 10; // visual px at zoom=1
+  return (
+    <div
+      data-annotation-interactive="true"
+      onPointerDown={onPointerDown}
+      style={{
+        position: "absolute",
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        width: SIZE,
+        height: SIZE,
+        borderRadius: "50%",
+        background: "white",
+        border: `1.5px solid ${color}`,
+        boxShadow: "0 0 0 1px rgba(0,0,0,0.35)",
+        transform: `translate(-50%, -50%) scale(${1 / visualZoom})`,
+        transformOrigin: "center",
+        cursor,
+        touchAction: "none",
+      }}
+    />
+  );
+}
+
+/** Non-interactive point marker (polygon draft vertices). */
+function Dot({
+  x,
+  y,
+  zoom,
+  size,
+  fill,
+  stroke,
+}: {
+  x: number;
+  y: number;
+  zoom: number;
+  size: number;
+  fill: string;
+  stroke: string;
+}) {
+  const visualZoom = Math.max(0.25, zoom);
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background: fill,
+        border: `1.5px solid ${stroke}`,
+        transform: `translate(-50%, -50%) scale(${1 / visualZoom})`,
+        transformOrigin: "center",
+      }}
+    />
+  );
 }
 
 // Retained for possible future use
