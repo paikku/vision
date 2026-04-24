@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { segmentRegion, toShape } from "../service/segment";
 import { BulkApplyModal } from "./BulkApplyModal";
 import type { ClassShortcutKey } from "../types";
 
 const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
 const REMOVE_KEYS = new Set(["d"]);
+const SEGMENT_KEY = "h";
 
 function isEditableTarget(target: EventTarget | null) {
   if (!target) return false;
@@ -58,6 +60,18 @@ export function LabelPanel() {
   const [bulkAnnotationId, setBulkAnnotationId] = useState<string | null>(null);
   const [annotCtxMenu, setAnnotCtxMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
+  // In-flight segmentation — one per annotation at a time. If H is pressed
+  // again on the same annotation, the previous request is cancelled.
+  const segmentCtlRef = useRef<Map<string, AbortController>>(new Map());
+  const [segmentingIds, setSegmentingIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const controllers = segmentCtlRef.current;
+    return () => {
+      for (const ctl of controllers.values()) ctl.abort();
+      controllers.clear();
+    };
+  }, []);
+
   // Close annotation context menu on outside click
   useEffect(() => {
     if (!annotCtxMenu) return;
@@ -70,10 +84,60 @@ export function LabelPanel() {
     (a) => a.frameId === activeFrameId,
   );
 
+  const runSegment = useCallback(
+    async (annotationId: string) => {
+      const state = useStore.getState();
+      const ann = state.annotations.find((a) => a.id === annotationId);
+      if (!ann || ann.shape.kind !== "rect") return;
+      const frame = state.frames.find((f) => f.id === ann.frameId);
+      if (!frame) return;
+      const klass = state.classes.find((c) => c.id === ann.classId);
+
+      const prev = segmentCtlRef.current.get(annotationId);
+      if (prev) prev.abort();
+      const ctl = new AbortController();
+      segmentCtlRef.current.set(annotationId, ctl);
+      setSegmentingIds((s) => {
+        const next = new Set(s);
+        next.add(annotationId);
+        return next;
+      });
+
+      try {
+        const result = await segmentRegion(
+          frame.url,
+          { bbox: ann.shape, classHint: klass?.name },
+          { signal: ctl.signal },
+        );
+        if (ctl.signal.aborted) return;
+        if (!result) return;
+        // Verify annotation still exists before mutating — the user may
+        // have deleted it while the request was in flight.
+        const stillExists = useStore
+          .getState()
+          .annotations.some((a) => a.id === annotationId);
+        if (!stillExists) return;
+        updateAnnotation(annotationId, { shape: toShape(result) });
+      } finally {
+        if (segmentCtlRef.current.get(annotationId) === ctl) {
+          segmentCtlRef.current.delete(annotationId);
+        }
+        setSegmentingIds((s) => {
+          if (!s.has(annotationId)) return s;
+          const next = new Set(s);
+          next.delete(annotationId);
+          return next;
+        });
+      }
+    },
+    [updateAnnotation],
+  );
+
   // Capture-phase listener priority rules:
   //   1. Hovering a class row + Q/W/E/R → assign shortcut to that class
   //   2. Hovering an annotation row + Delete/Backspace → remove hovered annotation
   //   3. Hovering an annotation row + Q/W/E/R → change hovered annotation class
+  //   4. Hovering an annotation row + H → refine via server segmentation
   // stopImmediatePropagation prevents the bubble-phase useKeyboardShortcuts handler from also firing.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -110,13 +174,21 @@ export function LabelPanel() {
             e.preventDefault();
             e.stopImmediatePropagation();
             updateAnnotation(hoveredAnnotation, { classId: klass.id });
+            return;
           }
+        }
+        // H → refine shape via segmentation endpoint
+        if (key === SEGMENT_KEY) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          void runSegment(hoveredAnnotation);
+          return;
         }
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [removeAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
+  }, [removeAnnotation, runSegment, setActiveClass, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
 
   return (
     <>
@@ -263,11 +335,18 @@ export function LabelPanel() {
                       #{idx + 1} · {klass?.name ?? "—"}
                     </span>
                   </button>
-                  {isHovered && (
-                    <span className="shrink-0 text-[10px] text-[var(--color-muted)]">
-                      QWER→class
+                  {segmentingIds.has(a.id) ? (
+                    <span
+                      className="shrink-0 text-[10px] text-[var(--color-accent)]"
+                      title="Segmenting…"
+                    >
+                      …seg
                     </span>
-                  )}
+                  ) : isHovered ? (
+                    <span className="shrink-0 text-[10px] text-[var(--color-muted)]">
+                      QWER·H
+                    </span>
+                  ) : null}
                   <select
                     value={a.classId}
                     onChange={(e) =>
@@ -299,6 +378,7 @@ export function LabelPanel() {
         <ul className="space-y-1 text-xs text-[var(--color-muted)]">
           <li><Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class</li>
           <li>hover annotation + <Key>Q</Key>–<Key>R</Key> change class</li>
+          <li>hover annotation + <Key>H</Key> refine by segmentation</li>
           <li><Key>D</Key> delete selected / hovered box</li>
           <li><Key>1</Key> prev frame · <Key>2</Key> next frame</li>
           <li><Key>C</Key> toggle draw/edit · <Key>Esc</Key> cancel draw</li>

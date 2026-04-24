@@ -142,7 +142,8 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 1. 클래스 행 hover + `Q/W/E/R` → 단축키 할당 **+ active class 전환**
 2. annotation 행 hover + `D` → hover된 annotation 삭제
 3. annotation 행 hover + `Q/W/E/R` → hover된 annotation의 class 변경
-4. 소비되지 않은 키 → `useKeyboardShortcuts`(버블 단계)
+4. annotation 행 hover + `H` → 서버 세그먼테이션으로 shape refine (`features/annotations/service/segment.ts`, `BACKEND_SEGMENT_REQUIREMENTS.md`)
+5. 소비되지 않은 키 → `useKeyboardShortcuts`(버블 단계)
 
 전역 단축키 (`useKeyboardShortcuts`):
 
