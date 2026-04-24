@@ -9,18 +9,26 @@
 
 ```text
 app/                        # Next.js 라우팅 (얇게 유지)
-  page.tsx                  ← Workspace만 렌더
+  page.tsx                  ← /projects 리디렉션
+  projects/                 ← /projects, /projects/[id], /projects/[id]/videos/[vid]
+  api/projects/...          ← fs persistence REST (storage.ts 경유)
 
 src/
   components/               # shell · 여러 feature를 조합하는 유일한 자리
-    Workspace.tsx           # 최상위 shell
+    ProjectsPage.tsx        # 프로젝트 목록 shell
+    ProjectDetailPage.tsx   # 비디오 테이블 + 프레임 그리드 shell
+    ProjectWorkspace.tsx    # 라벨링 워크스페이스 shell (store hydrate)
+    ProjectTopBar.tsx       # 공통 상단 바
+    UploadVideoModal.tsx    # MediaDropzone + uploadVideo 합성
     MainMediaPanel.tsx      # media ↔ frames ↔ annotations 조립
+    useProjectSync.ts       # store ↔ 서버 동기화 (shell 전용 hook)
 
   features/
     media/                  # 업로드·원본·normalize·비디오 재생·프레임 추출
     frames/                 # 프레임 목록·활성 프레임·exception 필터
     annotations/            # class·shape·tool·drawing·keyboard
     export/                 # 직렬화/다운로드
+    projects/               # 프로젝트·비디오·프레임 서버 API 래퍼 (slice 없음, 타입+service만)
 
   shared/                   # 순수 유틸·범용 훅만
     types.ts                # Point 등 도메인 무관 타입
@@ -28,6 +36,7 @@ src/
 
   lib/
     store.ts                # 슬라이스 합성 루트 (공개 API 단일 지점)
+    server/storage.ts       # 서버 전용 파일시스템 persistence helper (DB 교체 seam)
 ```
 
 각 feature 내부 구조는 동일 패턴:
@@ -35,13 +44,16 @@ src/
 ```text
 features/<name>/
   types.ts            # 도메인 타입 (외부 공유 허용)
-  slice.ts            # zustand slice 팩토리
-  service/            # 비동기/외부 IO · worker · 파일 핸들링
+  slice.ts            # zustand slice 팩토리 (projects는 stateless라 없음)
+  service/            # 비동기/외부 IO · worker · 파일 핸들링 · 서버 fetch
   tools/              # (annotations 전용) 플러그형 도구
   hooks/              # feature 내부 전용 훅
-  ui/                 # 이 feature 소유 컴포넌트
+  ui/                 # 이 feature 소유 컴포넌트 (projects는 ui 없음 — shell 전담)
   index.ts            # 공개 배럴 (타입·UI 루트만 re-export)
 ```
+
+> **projects feature 예외**: 슬라이스/UI 없이 `types.ts` + `service/api.ts`만 존재.
+> 프로젝트 단위 화면은 모두 shell(`components/`)이 소유하고, 서버 호출은 `@/features/projects/service/api`를 deep import한다 (barrel은 타입 전용).
 
 ---
 
@@ -88,8 +100,9 @@ features/<name>/
 - 외부 IO (File API, worker, ffmpeg.wasm, 서버 fetch)는 여기로.
 - UI에서 직접 `new Worker(...)`, `ffmpeg()` 호출 금지. 반드시 service 경유.
 - Service는 순수 함수 (`async (input) => output`) 시그니처 유지. Store 쓰지 않는다.
-  - 호출자(UI/slice)가 결과를 받아 store에 반영한다.
-- 향후 서버 persistence 전환 시 **service 내부만 async 구현을 바꾸면 된다** — 이 자리를 의도적으로 남겼음.
+  - 호출자(UI/slice/shell)가 결과를 받아 store에 반영한다.
+- 서버 persistence는 **`features/projects/service/api.ts` (REST 클라이언트) ↔ `app/api/projects/...` (라우트) ↔ `lib/server/storage.ts` (fs)** 의 3단 구조. DB로 교체 시 `storage.ts` 단일 파일만 갈아끼우면 된다.
+- 다른 feature는 자체 service에서 `projects/service`를 직접 호출하지 말 것 — store에 반영해야 할 동기화 로직은 shell의 `useProjectSync` 같은 훅으로 응집시킨다.
 
 ---
 
@@ -116,22 +129,23 @@ features/<name>/
 
 | 미래 요구 | 오늘 준비된 자리 | 변경 규모 |
 |---|---|---|
-| 멀티프로젝트 | slice 합성 구조 | `useStore`를 프로젝트별 factory로 교체 |
-| 서버 persistence | `features/*/service/*` | service 내부만 async화 |
+| ~~멀티프로젝트~~ | ✅ 구현됨 — `features/projects` + `app/projects/*` 라우트 | — |
+| ~~서버 persistence~~ | ✅ 구현됨 — `lib/server/storage.ts` + `app/api/projects/*` | DB 교체 시 `storage.ts`만 |
+| 멀티 유저/권한 | `Project.members` 필드만 placeholder, UI는 follow-up | members CRUD 라우트 + 인증 미들웨어 |
 | 이벤트 버스 | cross-slice cleanup이 composition root에 집중 | 해당 블록만 emitter로 치환 |
 | 새 도구 (polygon) | `annotations/tools/` + `Shape` union | registry 등록 + 렌더 분기 |
 | `entities/` 승격 | `features/*/types.ts` | 파일 이동만 |
-| `workflows/` 도입 | `components/` shell | Workspace 분해·이동 |
+| `workflows/` 도입 | `components/` shell (`ProjectWorkspace` 등) | shell 분해·이동 |
 
 ---
 
 ## 8) 의도적으로 **하지 않는** 것 (지금 도입 금지)
 
-- `projectId` 프리픽스
-- feature API를 `Promise<T>`로 래핑 (현재 모든 store 액션은 동기)
-- `entities/`, `workflows/`, `repository.ts`, `api.ts` 디렉토리
+- feature API를 `Promise<T>`로 래핑 (현재 store 액션은 동기, 비동기는 service에 격리)
+- `entities/`, `workflows/`, `repository.ts` 디렉토리
 - 이벤트 버스 실구현 (자리만 남김)
 - export schemaVersion, 다중 포맷
+- 클라이언트가 `lib/server/storage.ts`를 직접 import (서버 전용 — 반드시 API 라우트 경유)
 
 ---
 
@@ -144,3 +158,5 @@ features/<name>/
 - [ ] 크로스 feature 영향이 있으면 shell 또는 composition root에서 처리됨
 - [ ] 새 service는 store 직접 접근 안 함
 - [ ] 새 UI는 `features/<A>/ui/` 외부에서 imports 되지 않음 (barrel만 노출)
+- [ ] 서버 persistence를 건드렸다면 `lib/server/storage.ts`만 통과 (라우트가 fs/path를 직접 부르지 않음)
+- [ ] 새 API 라우트는 `app/api/projects/...` 패턴 + `features/projects/service/api.ts`에 클라이언트 래퍼 추가
