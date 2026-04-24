@@ -476,11 +476,15 @@ class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
 
 /**
  * Validate the server normalize endpoint and resolve it against the current
- * origin. XMLHttpRequest.open throws a SyntaxError on any string that the
- * URL parser can't resolve (e.g. whitespace, bare hostnames without a scheme,
- * the literal "undefined"), which used to blow up the whole normalize
- * pipeline before the ffmpeg.wasm fallback had a chance to run. Returning
- * `null` here lets the caller skip this adapter cleanly.
+ * origin. XMLHttpRequest.open throws a SyntaxError on any URL it can't parse
+ * (malformed percent encodings, bare `http://`, `javascript:` URLs, …),
+ * which used to blow up the whole normalize pipeline before the ffmpeg.wasm
+ * fallback got a chance to run. Returning `null` here lets the caller skip
+ * this adapter cleanly.
+ *
+ * We only accept http/https results so an accidentally-pasted value like
+ * `javascript:void(0)` doesn't silently slip through the WHATWG URL parser
+ * and reach xhr.open.
  */
 function resolveServerEndpoint(): string | null {
   const raw = process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT?.trim();
@@ -488,7 +492,9 @@ function resolveServerEndpoint(): string | null {
   try {
     const base =
       typeof window !== "undefined" ? window.location.href : "http://localhost/";
-    return new URL(raw, base).toString();
+    const parsed = new URL(raw, base);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.toString();
   } catch {
     return null;
   }

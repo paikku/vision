@@ -27,6 +27,74 @@ const { __internals, normalizeVideoFile } = await import(
   "../src/features/media/service/normalize.ts"
 );
 
+// ----- Test 0: server adapter URL validator -----
+// Regression: XMLHttpRequest.open throws SyntaxError on inputs the URL parser
+// can't resolve. resolveServerEndpoint() must bail (→ adapter returns null)
+// for those, so the fallback chain keeps running. Record what gets through
+// to xhr.open via a stub so we can assert the boundary behavior.
+{
+  type OpenArgs = { method: string; url: string };
+  const openCalls: OpenArgs[] = [];
+  class StubXHR {
+    upload = { onprogress: null, onload: null };
+    responseType = "";
+    response: unknown = null;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    ontimeout: (() => void) | null = null;
+    onprogress: (() => void) | null = null;
+    open(method: string, url: string) {
+      // Mimic the browser behavior: anything new URL() can't resolve throws.
+      // Browser's xhr.open uses the same WHATWG URL parser, so if our
+      // validator lets something through that parses, xhr.open will accept it.
+      openCalls.push({ method, url });
+    }
+    setRequestHeader() {}
+    send() {
+      // Never fire onload — adapter stays pending. We only care about what
+      // open() received.
+    }
+    getResponseHeader() {
+      return null;
+    }
+    abort() {}
+  }
+  (globalThis as unknown as { XMLHttpRequest: unknown }).XMLHttpRequest = StubXHR;
+
+  // Inputs that either make the WHATWG URL parser throw (http://, weird
+  // scheme bits) or parse to a scheme xhr.open can't POST to (javascript:,
+  // file:). All must be filtered by the validator.
+  const mustBeRejected = [
+    "",
+    "   ",
+    "http://",
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "data:text/plain,hi",
+  ];
+  for (const v of mustBeRejected) {
+    const before = openCalls.length;
+    process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT = v;
+    const adapter = new __internals.ServerNormalizeAdapter();
+    const p = adapter.normalize(
+      new File([new Uint8Array([1])], "x.webm", { type: "video/webm" }),
+    );
+    // Let synchronous path run. If the endpoint is rejected, adapter returns
+    // null synchronously; if not, it opens xhr and hangs.
+    await Promise.race([p, new Promise((r) => setTimeout(r, 10))]);
+    assert.equal(
+      openCalls.length,
+      before,
+      `bad endpoint ${JSON.stringify(v)} must never reach xhr.open`,
+    );
+  }
+
+  delete process.env.NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT;
+  delete (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest;
+  console.log("✓ server adapter rejects unparseable endpoints without calling xhr.open");
+}
+
 type FakeFfmpeg = {
   writeFile: (name: string, bytes: Uint8Array) => Promise<void>;
   exec: (args: string[]) => Promise<number>;
