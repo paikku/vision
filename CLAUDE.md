@@ -82,11 +82,16 @@ MediaSource → Frame[] → Annotation[]
 
 ```ts
 begin(start: Point): ShapeDraft
-// ShapeDraft.update(current) → 미리보기 Shape
-// ShapeDraft.commit(end)     → Shape | null (null이면 버림)
+// ShapeDraft.update(current)   → 미리보기 Shape (마우스 hover)
+// ShapeDraft.addPoint(p)       → { done, shape }
+//   done=true  → shape 로 확정(null 이면 폐기)
+//   done=false → shape 로 미리보기 갱신하고 계속 드래프트
+// ShapeDraft.tryClose?()       → 명시적 닫기 요청(Enter). 닫을 수 없으면 null
 ```
 
-현재 도구: `rect` (단축키 R), `MIN_SIZE = 0.0005`(~0.05% of frame)
+현재 도구:
+- `rect` (단축키 R): 2-클릭, `MIN_SIZE = 0.0005`
+- `polygon` (단축키 P): N-클릭 꼭짓점 누적, **첫 꼭짓점 근처 클릭(`CLOSE_DIST = 0.012`) 또는 `Enter`로 닫기**(3점 이상 필요), 연속 중복점은 `MIN_STEP = 0.001`로 억제. 이동은 모든 vertex translate, 리사이즈 핸들·vertex edit 은 follow-up
 
 새 도구 추가 절차:
 1. `features/annotations/tools/` 하위에 `AnnotationTool` 구현

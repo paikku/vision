@@ -485,8 +485,9 @@ function ShapeView({
   const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
 
   if (shape.kind === "polygon") {
-    const d = polygonPath(shape.rings);
+    const d = polygonPath(shape.rings, { closed: !draft });
     if (!d) return null;
+    const canClose = draft && (shape.rings[0]?.length ?? 0) >= 3;
     return (
       <g
         data-annotation-interactive="true"
@@ -497,11 +498,12 @@ function ShapeView({
       >
         <path
           d={d}
-          fill={`${klass.color}${fillOpacity}`}
+          fill={draft ? "none" : `${klass.color}${fillOpacity}`}
           fillRule="evenodd"
           stroke={klass.color}
           strokeWidth={strokeWidth}
           strokeLinejoin="round"
+          strokeLinecap="round"
           strokeDasharray={draft ? "5 4" : undefined}
           vectorEffect="non-scaling-stroke"
           style={{ cursor: onStartMove ? "move" : onSelect ? "pointer" : undefined }}
@@ -518,6 +520,21 @@ function ShapeView({
             style={{ pointerEvents: "none" }}
           />
         )}
+        {/* Draft-only: dot the committed vertices so users see the path
+            they've built; highlight the first vertex once closable. */}
+        {draft && shape.rings[0]?.map((p, i) => (
+          <circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r={(i === 0 && canClose ? 6 : 3) / visualZoom}
+            fill={i === 0 && canClose ? klass.color : "white"}
+            stroke={klass.color}
+            strokeWidth={1.5 / visualZoom}
+            vectorEffect="non-scaling-stroke"
+            style={{ pointerEvents: "none" }}
+          />
+        ))}
       </g>
     );
   }

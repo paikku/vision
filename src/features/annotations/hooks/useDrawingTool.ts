@@ -27,9 +27,12 @@ type DrawingToolOptions = {
 /**
  * Click-to-click annotation drawing.
  *
- * - Click 1: anchor first corner, preview follows mouse.
- * - Click 2: commit the shape.
- * - Right-click or Escape while pending: cancel.
+ * - Click 1: anchor first point, preview follows mouse (phase = "pending").
+ * - Click 2+: the tool decides via `addPoint` whether this click commits
+ *   (rect: yes on click 2; polygon: yes when near first vertex) or just
+ *   adds another vertex and keeps drafting.
+ * - `Enter` while pending: ask the tool to close (`tryClose`).
+ * - Right-click or `Escape` while pending: cancel.
  */
 export function useDrawingTool({
   stageRef,
@@ -41,7 +44,7 @@ export function useDrawingTool({
   onCommit,
 }: DrawingToolOptions) {
   const draftRef = useRef<ShapeDraft | null>(null);
-  // "pending" = first click placed, waiting for second click
+  // "pending" = first click placed, waiting for next click(s)
   const phaseRef = useRef<"idle" | "pending">("idle");
   const [draftShape, setDraftShape] = useState<Shape | null>(null);
 
@@ -66,10 +69,22 @@ export function useDrawingTool({
 
   const tool = TOOLS[activeToolId];
 
-  // Cancel on Escape key while a draft is pending.
+  // Cancel on Escape, or close on Enter (if the tool supports it).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && phaseRef.current === "pending") cancelDraft();
+      if (phaseRef.current !== "pending") return;
+      if (e.key === "Escape") {
+        cancelDraft();
+        return;
+      }
+      if (e.key === "Enter" && draftRef.current?.tryClose) {
+        const shape = draftRef.current.tryClose();
+        if (!shape) return;
+        e.preventDefault();
+        const { frame: f, activeClassId: cid, onCommit: commit } = optsRef.current;
+        cancelDraft();
+        if (f && cid) commit(f.id, cid, shape);
+      }
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
@@ -99,15 +114,20 @@ export function useDrawingTool({
         draftRef.current = tool.begin(start);
         setDraftShape(draftRef.current.update(start));
         phaseRef.current = "pending";
-      } else {
-        // Second click: commit
-        if (!draftRef.current) { phaseRef.current = "idle"; return; }
-        const end = toNorm(e);
-        const shape = draftRef.current.commit(end);
+        return;
+      }
+
+      // Subsequent click: let the tool decide
+      if (!draftRef.current) { phaseRef.current = "idle"; return; }
+      const p = toNorm(e);
+      const { done, shape } = draftRef.current.addPoint(p);
+      if (done) {
         draftRef.current = null;
         setDraftShape(null);
         phaseRef.current = "idle";
         if (shape) commit(f.id, cid, shape);
+      } else {
+        setDraftShape(shape ?? draftRef.current.update(p));
       }
     },
     [tool, toNorm, cancelDraft],

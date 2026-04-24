@@ -20,9 +20,12 @@ export const rectTool: AnnotationTool = {
   begin(start) {
     return {
       update: (current) => rectFrom(start, current),
-      commit: (end) => {
-        const shape = rectFrom(start, end);
-        return shape.w < MIN_SIZE || shape.h < MIN_SIZE ? null : shape;
+      addPoint: (p) => {
+        const shape = rectFrom(start, p);
+        return {
+          done: true,
+          shape: shape.w < MIN_SIZE || shape.h < MIN_SIZE ? null : shape,
+        };
       },
     };
   },

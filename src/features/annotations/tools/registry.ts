@@ -1,4 +1,5 @@
 import type { ToolId } from "../types";
+import { polygonTool } from "./polygon";
 import { rectTool } from "./rect";
 import type { AnnotationTool } from "./types";
 
@@ -10,16 +11,7 @@ import type { AnnotationTool } from "./types";
  */
 export const TOOLS: Record<ToolId, AnnotationTool> = {
   rect: rectTool,
-  polygon: {
-    id: "polygon",
-    name: "Polygon",
-    shortcut: "P",
-    cursor: "crosshair",
-    disabled: true,
-    begin: () => {
-      throw new Error("polygon tool not implemented");
-    },
-  },
+  polygon: polygonTool,
   mask: {
     id: "mask",
     name: "Segment",

@@ -81,15 +81,26 @@ export function translateShape(shape: Shape, dx: number, dy: number): Shape {
   };
 }
 
-/** Build an SVG path "d" attribute for a polygon with holes (even-odd). */
-export function polygonPath(rings: PolygonPoint[][]): string {
+/**
+ * Build an SVG path "d" attribute for a polygon with holes (even-odd).
+ *
+ * - `closed: true` (default): closes each ring with `Z`, requires ≥3 points
+ * - `closed: false`: polyline mode used by drafts so the user sees the
+ *   partial shape with ≥2 points before the polygon can be closed
+ */
+export function polygonPath(
+  rings: PolygonPoint[][],
+  options: { closed?: boolean } = {},
+): string {
+  const closed = options.closed !== false;
+  const minPoints = closed ? 3 : 2;
   const parts: string[] = [];
   for (const ring of rings) {
-    if (ring.length < 3) continue;
+    if (ring.length < minPoints) continue;
     const [first, ...rest] = ring;
     parts.push(`M ${first.x} ${first.y}`);
     for (const p of rest) parts.push(`L ${p.x} ${p.y}`);
-    parts.push("Z");
+    if (closed) parts.push("Z");
   }
   return parts.join(" ");
 }
