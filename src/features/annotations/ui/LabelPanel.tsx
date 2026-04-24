@@ -382,7 +382,7 @@ export function LabelPanel() {
           <li>hover annotation + <Key>H</Key> refine by segmentation</li>
           <li><Key>D</Key> delete selected / hovered box</li>
           <li><Key>R</Key> rect tool · <Key>P</Key> polygon tool</li>
-          <li>polygon: click vertices, click near first or <Key>Enter</Key> to close</li>
+          <li>polygon: click vertices, <Key>Enter</Key> to close (≥3 points)</li>
           <li><Key>1</Key> prev frame · <Key>2</Key> next frame</li>
           <li><Key>C</Key> toggle draw/edit · <Key>Esc</Key> cancel draw</li>
           <li>scroll → zoom · dblclick → fit</li>
