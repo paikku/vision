@@ -1,18 +1,85 @@
 @import "tailwindcss";
 
 @theme {
+  /* ─── Color · surfaces ─────────────────────────────── */
   --color-bg: #0a0c10;
   --color-surface: #12161d;
   --color-surface-2: #1a1f29;
+  --color-surface-3: #222836;
   --color-line: #262d3a;
+  --color-line-strong: #394156;
+
+  /* ─── Color · foreground ───────────────────────────── */
   --color-text: #e7eaf0;
+  --color-text-strong: #f5f7fb;
   --color-muted: #8b94a3;
+  --color-subtle: #5a6272;
+
+  /* ─── Color · brand / semantic ─────────────────────── */
   --color-accent: #5b8cff;
+  --color-accent-hover: #7aa0ff;
   --color-accent-soft: #5b8cff22;
+  --color-accent-contrast: #ffffff;
+
+  --color-success: #37d399;
+  --color-success-soft: #37d39922;
+  --color-warning: #f2b84b;
+  --color-warning-soft: #f2b84b22;
   --color-danger: #ff5b6b;
+  --color-danger-hover: #ff7985;
+  --color-danger-soft: #ff5b6b22;
+  --color-info: #5bc7ff;
+  --color-info-soft: #5bc7ff22;
+
+  /* ─── Color · interaction ──────────────────────────── */
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-hover-strong: rgba(255, 255, 255, 0.10);
+  --color-press: rgba(255, 255, 255, 0.14);
+  --color-focus-ring: #5b8cff;
+  --color-overlay: rgba(5, 7, 12, 0.72);
+
+  /* ─── Radius ───────────────────────────────────────── */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* ─── Shadow ───────────────────────────────────────── */
+  --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --shadow-ring: 0 0 0 2px var(--color-focus-ring);
+
+  /* ─── Typography scale ─────────────────────────────── */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+
+  /* ─── Motion ───────────────────────────────────────── */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* ─── Font ─────────────────────────────────────────── */
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
 }
 
 html,
@@ -24,40 +91,69 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 ::selection {
   background: var(--color-accent-soft);
-  color: var(--color-text);
+  color: var(--color-text-strong);
 }
 
-/* Subtle scrollbars */
+/* ─── Focus ring (visible only on keyboard focus) ─── */
+:where(button, a, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Scrollbars ───────────────────────────────────── */
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
 *::-webkit-scrollbar-thumb {
-  background: var(--color-surface-2);
-  border-radius: 6px;
+  background: var(--color-surface-3);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: var(--color-line);
+  background: var(--color-line-strong);
+  background-clip: padding-box;
+  border: 2px solid transparent;
 }
 
-/* Checker background for transparent media areas */
+/* ─── Checker background for transparent media areas ─ */
 .bg-checker {
   background-image:
-    linear-gradient(45deg, #1a1f29 25%, transparent 25%),
-    linear-gradient(-45deg, #1a1f29 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #1a1f29 75%),
-    linear-gradient(-45deg, transparent 75%, #1a1f29 75%);
+    linear-gradient(45deg, var(--color-surface-2) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--color-surface-2) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--color-surface-2) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--color-surface-2) 75%);
   background-size: 20px 20px;
   background-position:
     0 0,
     0 10px,
     10px -10px,
     -10px 0;
-  background-color: #12161d;
+  background-color: var(--color-surface);
+}
+
+/* ─── Surface helpers ──────────────────────────────── */
+.surface-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+}
+.surface-raised {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }

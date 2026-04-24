@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { cn } from "@/shared/ui";
 import type { MediaSource } from "../types";
 import {
   frameFromImage,
@@ -24,12 +25,6 @@ function phaseLabel(p: NormalizeProgress): string {
 }
 
 export type MediaDropzoneProps = {
-  /**
-   * If provided, the dropzone delegates what to do with the normalized media
-   * to the caller instead of committing it to the workspace store. Enables
-   * reuse from upload-to-project modals. When omitted, the default workspace
-   * behavior (setMedia + addFrames for images) runs.
-   */
   onComplete?: (media: MediaSource) => Promise<void> | void;
 };
 
@@ -44,7 +39,7 @@ export function MediaDropzone({ onComplete }: MediaDropzoneProps = {}) {
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
-      if (busy) return; // guard: the label/input are already blocked visually
+      if (busy) return;
       const file = files?.[0];
       if (!file) return;
       if (!inferMediaKind(file)) {
@@ -60,7 +55,6 @@ export function MediaDropzone({ onComplete }: MediaDropzoneProps = {}) {
         });
         if (onComplete) {
           await onComplete(media);
-          // Caller owns the object URL — don't leak it as workspace media.
           URL.revokeObjectURL(media.url);
         } else {
           setMedia(media);
@@ -78,11 +72,6 @@ export function MediaDropzone({ onComplete }: MediaDropzoneProps = {}) {
     [addFrames, busy, onComplete, setMedia],
   );
 
-  // While the request is in-flight:
-  //  - the <label> is not a valid drop target (onDragOver / onDrop no-op)
-  //  - the hidden <input> is disabled, so clicks don't reopen the picker
-  //  - pointer-events on the label are off so the native click-to-browse
-  //    affordance is suppressed
   const blocked = busy;
 
   return (
@@ -102,32 +91,30 @@ export function MediaDropzone({ onComplete }: MediaDropzoneProps = {}) {
           if (blocked) return;
           void handleFiles(e.dataTransfer.files);
         }}
-        className={[
-          "group relative flex w-full max-w-xl flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-10 py-16 text-center transition",
+        className={cn(
+          "group relative flex w-full max-w-xl flex-col items-center justify-center gap-4 rounded-[var(--radius-2xl)] border-2 border-dashed px-10 py-16 text-center transition-colors",
           blocked
             ? "pointer-events-none cursor-not-allowed border-[var(--color-line)] bg-[var(--color-surface)] opacity-90"
             : hover
               ? "cursor-pointer border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
               : "cursor-pointer border-[var(--color-line)] bg-[var(--color-surface)] hover:border-[var(--color-accent)]/60",
-        ].join(" ")}
+        )}
       >
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--color-surface-2)] text-[var(--color-accent)]">
+        <div className="flex h-14 w-14 items-center justify-center rounded-[var(--radius-full)] bg-[var(--color-surface-2)] text-[var(--color-accent)]">
           <UploadIcon />
         </div>
         <div>
-          <p className="text-base font-medium">
+          <p className="text-[var(--text-lg)] font-medium text-[var(--color-text-strong)]">
             {blocked ? "영상 처리 중… 업로드가 잠시 비활성화됩니다" : "Drop an image or video"}
           </p>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
+          <p className="mt-1 text-[var(--text-sm)] text-[var(--color-muted)]">
             {blocked
               ? "처리 중에는 새 파일을 올릴 수 없습니다."
               : "or click to browse · jpg, png, webp, mp4, webm, mov"}
           </p>
         </div>
         {progress && <ProgressBar progress={progress} />}
-        {error && (
-          <p className="text-sm text-[var(--color-danger)]">{error}</p>
-        )}
+        {error && <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>}
         <input
           ref={inputRef}
           type="file"
@@ -149,16 +136,16 @@ function ProgressBar({ progress }: { progress: NormalizeProgress }) {
   const label = phaseLabel(progress);
   return (
     <div className="flex w-full max-w-sm flex-col gap-1">
-      <div className="flex items-center justify-between text-[11px] text-[var(--color-muted)]">
+      <div className="flex items-center justify-between text-[var(--text-xs)] text-[var(--color-muted)]">
         <span>{label}</span>
         <span className="tabular-nums">{pct === null ? "…" : `${pct}%`}</span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]">
+      <div className="h-1.5 w-full overflow-hidden rounded-[var(--radius-full)] bg-[var(--color-surface-2)]">
         <div
-          className={[
-            "h-full rounded-full bg-[var(--color-accent)] transition-[width]",
-            pct === null ? "animate-pulse w-1/3" : "",
-          ].join(" ")}
+          className={cn(
+            "h-full rounded-[var(--radius-full)] bg-[var(--color-accent)] transition-[width]",
+            pct === null && "w-1/3 animate-pulse",
+          )}
           style={pct === null ? undefined : { width: `${pct}%` }}
         />
       </div>

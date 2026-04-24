@@ -3,6 +3,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Frame } from "@/features/frames/types";
 import { selectVisibleFrames, useStore } from "@/lib/store";
+import {
+  Badge,
+  Button,
+  Menu,
+  MenuItem,
+  MenuSeparator,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
+  SegmentedControl,
+  cn,
+} from "@/shared/ui";
 import type { Annotation, LabelClass } from "../types";
 
 type ContextMenu = { frameId: string; x: number; y: number };
@@ -13,7 +26,6 @@ interface Props {
   annotations: Annotation[];
   exceptedFrameIds: Record<string, boolean>;
   classes: LabelClass[];
-  /** Called with the list of frame IDs to apply to (annotation is copied). */
   onApply: (frameIds: string[]) => void;
   onClose: () => void;
 }
@@ -27,8 +39,6 @@ export function BulkApplyModal({
   onApply,
   onClose,
 }: Props) {
-  // Sort/filter mirror the FrameStrip so the modal preview matches what the user
-  // sees on the left. Changing them here updates the strip too.
   const sort = useStore((s) => s.frameSortOrder);
   const filter = useStore((s) => s.frameFilterMode);
   const setSort = useStore((s) => s.setFrameSortOrder);
@@ -37,22 +47,6 @@ export function BulkApplyModal({
 
   const [selected, setSelected] = useState<Set<string>>(() => new Set(frames.map((f) => f.id)));
   const [ctxMenu, setCtxMenu] = useState<ContextMenu | null>(null);
-  const backdropRef = useRef<HTMLDivElement>(null);
-
-  // Close context menu on outside click
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const handler = () => setCtxMenu(null);
-    window.addEventListener("pointerdown", handler);
-    return () => window.removeEventListener("pointerdown", handler);
-  }, [ctxMenu]);
-
-  // Close modal on Escape
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -62,12 +56,14 @@ export function BulkApplyModal({
     return map;
   }, [annotations]);
 
-  // Per-frame class breakdown — same shape as FrameStrip so the summary UI matches.
   const classCounts = useMemo(() => {
     const map = new Map<string, Map<string, number>>();
     for (const a of annotations) {
       let inner = map.get(a.frameId);
-      if (!inner) { inner = new Map(); map.set(a.frameId, inner); }
+      if (!inner) {
+        inner = new Map();
+        map.set(a.frameId, inner);
+      }
       inner.set(a.classId, (inner.get(a.classId) ?? 0) + 1);
     }
     return map;
@@ -91,7 +87,6 @@ export function BulkApplyModal({
     [frames, annotations, exceptedFrameIds, sort, filter],
   );
 
-  // Scroll the active frame into view on open / when it changes.
   const gridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!activeFrameId) return;
@@ -104,7 +99,8 @@ export function BulkApplyModal({
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
@@ -126,221 +122,205 @@ export function BulkApplyModal({
   const klass = classes.find((c) => c.id === annotation.classId);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div
-        ref={backdropRef}
-        className="absolute inset-0"
-        onClick={onClose}
-      />
-      <div
-        className="relative z-10 flex max-h-[95vh] w-[1200px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] px-4 py-3">
-          <div className="flex items-center gap-2">
+    <Modal open size="xl" onClose={onClose} aria-label="일괄 적용">
+      <ModalHeader
+        onClose={onClose}
+        title={
+          <span className="flex items-center gap-2">
             <span
-              className="h-3 w-3 rounded-sm"
+              className="h-3 w-3 rounded-[var(--radius-xs)]"
               style={{ background: klass?.color ?? "#888" }}
             />
-            <span className="text-sm font-semibold">
-              일괄 적용 — {klass?.name ?? "—"}
-            </span>
-            <span className="text-xs text-[var(--color-muted)]">
-              {selected.size}개 선택 / {displayFrames.length}개 표시
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-[var(--color-muted)] hover:text-[var(--color-text)]"
+            일괄 적용 — {klass?.name ?? "—"}
+          </span>
+        }
+        subtitle={`${selected.size}개 선택 / ${displayFrames.length}개 표시`}
+      />
+
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-line)] px-5 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--text-2xs)] uppercase tracking-wide text-[var(--color-muted)]">정렬</span>
+          <SegmentedControl
+            size="sm"
+            value={sort}
+            onChange={(v) => setSort(v)}
+            options={[
+              { value: "added", label: "추가순" },
+              { value: "time", label: "시간순" },
+            ]}
+            aria-label="정렬 순서"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--text-2xs)] uppercase tracking-wide text-[var(--color-muted)]">필터</span>
+          <SegmentedControl
+            size="sm"
+            value={filter}
+            onChange={(v) => setFilter(v)}
+            options={[
+              { value: "all", label: "전체" },
+              { value: "unlabeled", label: "미라벨" },
+            ]}
+            aria-label="프레임 필터"
+          />
+        </div>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setSelected(new Set(displayFrames.map((f) => f.id)))}
           >
-            ✕
-          </button>
-        </div>
-
-        {/* Controls */}
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-line)] px-4 py-2">
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] text-[var(--color-muted)]">정렬</span>
-            {(["added", "time"] as const).map((s) => (
-              <button key={s} type="button" onClick={() => setSort(s)}
-                className={["rounded px-2 py-0.5 text-[11px] transition", sort === s ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"].join(" ")}>
-                {s === "added" ? "추가순" : "시간순"}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] text-[var(--color-muted)]">필터</span>
-            {(["all", "unlabeled"] as const).map((f) => (
-              <button key={f} type="button" onClick={() => setFilter(f)}
-                className={["rounded px-2 py-0.5 text-[11px] transition", filter === f ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"].join(" ")}>
-                {f === "all" ? "전체" : "미라벨"}
-              </button>
-            ))}
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <button type="button" onClick={() => setSelected(new Set(displayFrames.map((f) => f.id)))}
-              className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-text)]">
-              전체 선택
-            </button>
-            <button type="button" onClick={() => setSelected(new Set())}
-              className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-text)]">
-              전체 해제
-            </button>
-          </div>
-        </div>
-
-        {/* Thumbnail grid */}
-        <div ref={gridRef} className="flex-1 overflow-y-auto p-4">
-          {displayFrames.length === 0 ? (
-            <p className="py-8 text-center text-sm text-[var(--color-muted)]">표시할 프레임 없음</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-4 lg:grid-cols-4 xl:grid-cols-5">
-              {displayFrames.map((f) => {
-                const isSelected = selected.has(f.id);
-                const isActive = f.id === activeFrameId;
-                const originalIdx = frames.indexOf(f);
-                const count = counts.get(f.id) ?? 0;
-                const excepted = !!exceptedFrameIds[f.id];
-                const frameClassCounts = classCounts.get(f.id);
-                return (
-                  <div
-                    key={f.id}
-                    data-frame-id={f.id}
-                    style={
-                      isActive
-                        ? { outline: "3px solid #fbbf24", outlineOffset: "2px" }
-                        : undefined
-                    }
-                    className={[
-                      "group relative cursor-pointer select-none overflow-hidden rounded-lg border-2 transition",
-                      isSelected
-                        ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30"
-                        : "border-[var(--color-line)] opacity-60 hover:opacity-90",
-                    ].join(" ")}
-                    onClick={() => toggle(f.id)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setCtxMenu({ frameId: f.id, x: e.clientX, y: e.clientY });
-                    }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={f.url}
-                      alt={f.label}
-                      className="aspect-video w-full bg-black object-contain"
-                    />
-                    {/* Checkbox overlay */}
-                    <div className="absolute left-1 top-1">
-                      <div
-                        className={[
-                          "h-4 w-4 rounded border-2 flex items-center justify-center text-[10px] font-bold",
-                          isSelected
-                            ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white"
-                            : "border-white/60 bg-black/30",
-                        ].join(" ")}
-                      >
-                        {isSelected && "✓"}
-                      </div>
-                    </div>
-                    {/* Active frame badge */}
-                    {isActive && (
-                      <span
-                        className="absolute right-1 top-1 rounded-full px-1.5 py-px text-[10px] font-semibold text-black shadow"
-                        style={{ background: "#fbbf24" }}
-                      >
-                        현재
-                      </span>
-                    )}
-                    {/* Footer: index + label + annotation count (matches FrameStrip) */}
-                    <div className="flex items-center justify-between bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-muted)]">
-                      <span className="tabular-nums truncate">
-                        #{String(originalIdx + 1).padStart(2, "0")} · {f.label}
-                      </span>
-                      <span className="ml-1 shrink-0 rounded-full bg-[var(--color-surface-2)] px-1.5 text-[10px] text-[var(--color-text)]">
-                        {count}
-                      </span>
-                    </div>
-                    {/* Class breakdown badges or excepted indicator */}
-                    <div className="flex flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1 min-h-[18px]">
-                      {count === 0
-                        ? excepted && (
-                            <span className="flex items-center gap-0.5 rounded-full bg-[var(--color-accent)]/80 px-1.5 py-px text-[10px] text-white">
-                              제외됨
-                            </span>
-                          )
-                        : frameClassCounts &&
-                          [...frameClassCounts.entries()].map(([cid, n]) => {
-                            const cls = classById.get(cid);
-                            if (!cls) return null;
-                            return (
-                              <span
-                                key={cid}
-                                className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] text-white"
-                                style={{ background: cls.color }}
-                                title={cls.name}
-                              >
-                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/50" />
-                                {n}
-                              </span>
-                            );
-                          })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex shrink-0 items-center justify-between border-t border-[var(--color-line)] px-4 py-3">
-          <p className="text-xs text-[var(--color-muted)]">
-            우클릭: 기준 프레임 직전·직후 선택/해제
-          </p>
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose}
-              className="rounded border border-[var(--color-line)] px-3 py-1.5 text-sm hover:border-[var(--color-muted)]">
-              취소
-            </button>
-            <button
-              type="button"
-              disabled={selected.size === 0}
-              onClick={() => { onApply([...selected]); onClose(); }}
-              className="rounded bg-[var(--color-accent)] px-4 py-1.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40"
-            >
-              {selected.size}개 프레임에 적용
-            </button>
-          </div>
+            전체 선택
+          </Button>
+          <Button variant="ghost" size="xs" onClick={() => setSelected(new Set())}>
+            전체 해제
+          </Button>
         </div>
       </div>
 
-      {/* Right-click context menu for before/after select */}
-      {ctxMenu && (
-        <div
-          className="fixed z-50 overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] py-1 shadow-xl text-sm"
-          style={{ top: ctxMenu.y, left: ctxMenu.x }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {[
-            { label: "이전 모두 선택", dir: "before" as const, select: true },
-            { label: "이전 모두 해제", dir: "before" as const, select: false },
-            { label: "이후 모두 선택", dir: "after" as const, select: true },
-            { label: "이후 모두 해제", dir: "after" as const, select: false },
-          ].map(({ label, dir, select }) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => selectRelative(ctxMenu.frameId, dir, select)}
-              className="block w-full px-4 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)]"
-            >
-              {label}
-            </button>
-          ))}
+      <ModalBody ref={gridRef}>
+        {displayFrames.length === 0 ? (
+          <p className="py-8 text-center text-[var(--text-sm)] text-[var(--color-muted)]">
+            표시할 프레임 없음
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-3 lg:grid-cols-4 xl:grid-cols-5">
+            {displayFrames.map((f) => {
+              const isSelected = selected.has(f.id);
+              const isActive = f.id === activeFrameId;
+              const originalIdx = frames.indexOf(f);
+              const count = counts.get(f.id) ?? 0;
+              const excepted = !!exceptedFrameIds[f.id];
+              const frameClassCounts = classCounts.get(f.id);
+              return (
+                <div
+                  key={f.id}
+                  data-frame-id={f.id}
+                  style={
+                    isActive
+                      ? { outline: "2px solid var(--color-warning)", outlineOffset: "2px" }
+                      : undefined
+                  }
+                  className={cn(
+                    "group relative cursor-pointer select-none overflow-hidden rounded-[var(--radius-md)] border-2 transition-all",
+                    isSelected
+                      ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30"
+                      : "border-[var(--color-line)] opacity-60 hover:opacity-100",
+                  )}
+                  onClick={() => toggle(f.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCtxMenu({ frameId: f.id, x: e.clientX, y: e.clientY });
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={f.url}
+                    alt={f.label}
+                    className="aspect-video w-full bg-black object-contain"
+                  />
+                  <div className="absolute left-1 top-1">
+                    <div
+                      className={cn(
+                        "flex h-4 w-4 items-center justify-center rounded-[var(--radius-xs)] border-2 text-[var(--text-2xs)] font-bold",
+                        isSelected
+                          ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white"
+                          : "border-white/60 bg-black/30",
+                      )}
+                    >
+                      {isSelected && "✓"}
+                    </div>
+                  </div>
+                  {isActive && (
+                    <Badge
+                      tone="warning"
+                      size="xs"
+                      shape="pill"
+                      className="absolute right-1 top-1 shadow-[var(--shadow-xs)]"
+                    >
+                      현재
+                    </Badge>
+                  )}
+                  <div className="flex items-center justify-between bg-[var(--color-surface)] px-2 py-1 text-[var(--text-2xs)] text-[var(--color-muted)]">
+                    <span className="truncate tabular-nums">
+                      #{String(originalIdx + 1).padStart(2, "0")} · {f.label}
+                    </span>
+                    <Badge tone="neutral" size="xs" shape="pill" className="ml-1 shrink-0">
+                      {count}
+                    </Badge>
+                  </div>
+                  <div className="flex min-h-[18px] flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1">
+                    {count === 0
+                      ? excepted && (
+                          <Badge tone="accent" size="xs" shape="pill">
+                            제외됨
+                          </Badge>
+                        )
+                      : frameClassCounts &&
+                        [...frameClassCounts.entries()].map(([cid, n]) => {
+                          const cls = classById.get(cid);
+                          if (!cls) return null;
+                          return (
+                            <Badge
+                              key={cid}
+                              size="xs"
+                              shape="pill"
+                              color={cls.color}
+                              title={cls.name}
+                              swatch={<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />}
+                            >
+                              {n}
+                            </Badge>
+                          );
+                        })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ModalBody>
+
+      <ModalFooter className="justify-between">
+        <p className="text-[var(--text-xs)] text-[var(--color-muted)]">
+          우클릭: 기준 프레임 직전·직후 선택/해제
+        </p>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="md" onClick={onClose}>
+            취소
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={selected.size === 0}
+            onClick={() => {
+              onApply([...selected]);
+              onClose();
+            }}
+          >
+            {selected.size}개 프레임에 적용
+          </Button>
         </div>
+      </ModalFooter>
+
+      {ctxMenu && (
+        <Menu open onClose={() => setCtxMenu(null)} x={ctxMenu.x} y={ctxMenu.y}>
+          <MenuItem onClick={() => selectRelative(ctxMenu.frameId, "before", true)}>
+            이전 모두 선택
+          </MenuItem>
+          <MenuItem onClick={() => selectRelative(ctxMenu.frameId, "before", false)}>
+            이전 모두 해제
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem onClick={() => selectRelative(ctxMenu.frameId, "after", true)}>
+            이후 모두 선택
+          </MenuItem>
+          <MenuItem onClick={() => selectRelative(ctxMenu.frameId, "after", false)}>
+            이후 모두 해제
+          </MenuItem>
+        </Menu>
       )}
-    </div>
+    </Modal>
   );
 }

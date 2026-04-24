@@ -55,7 +55,7 @@ export function MainMediaPanel() {
   return (
     <div className="relative h-full min-h-0">
       <AnnotationStage />
-      <div className="pointer-events-auto absolute bottom-3 right-3 w-64 overflow-hidden rounded-md border border-[var(--color-line)] bg-black/80 shadow-xl">
+      <div className="pointer-events-auto absolute bottom-3 right-3 w-64 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-line)] bg-black/80 shadow-[var(--shadow-md)]">
         <video
           ref={previewVideoRef}
           src={media.url}
@@ -68,7 +68,7 @@ export function MainMediaPanel() {
         <button
           type="button"
           onClick={() => setCenterViewMode("video")}
-          className="w-full border-t border-[var(--color-line)] px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+          className="w-full border-t border-[var(--color-line)] px-2 py-1 text-[var(--text-xs)] text-[var(--color-text)] transition-colors hover:bg-[var(--color-hover)]"
         >
           Return to video playback
         </button>

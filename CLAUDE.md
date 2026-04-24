@@ -40,6 +40,7 @@ src/
     export/             # 직렬화/다운로드
     projects/           # 프로젝트·비디오·프레임 서버 API 래퍼 (fetch 기반, store 비의존)
   shared/               # 순수 유틸·범용 훅
+    ui/                 # 디자인 시스템 프리미티브 (Button, Modal, Badge, … — 모든 레이어가 import 허용)
   lib/
     store.ts            # 슬라이스 합성 루트 (useStore 공개 API)
     server/storage.ts   # 서버 전용 파일시스템 persistence helper
@@ -193,11 +194,63 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ---
 
-## 8) 스타일 규칙
+## 8) 디자인 시스템 (`src/shared/ui/` + `app/globals.css`)
 
-- Tailwind v4 사용
-- 디자인 토큰은 `app/globals.css`의 `@theme` CSS 변수로 관리
-- 컴포넌트에서 `var(--color-*)` 사용
+전체 UI는 **토큰 → 프리미티브 → 페이지 조립** 3층 구조를 따릅니다. 새로 UI를 짤 때 항상 **프리미티브를 먼저 찾고, 없으면 프리미티브를 확장/추가**합니다. 날것의 Tailwind 유틸로 버튼/모달을 재발명하지 않습니다.
+
+### 8.1 토큰 (`app/globals.css::@theme`)
+
+Tailwind v4의 `@theme` 블록에서 CSS 변수로 전체 디자인 토큰을 정의합니다. 컴포넌트는 **토큰 이름(`var(--color-*)`, `var(--radius-*)`, `var(--shadow-*)`, `var(--text-*)`)만** 참조합니다 — 생 hex/rgb나 `text-[10px]` 같은 임의 값은 추가하지 않습니다 (기존 코드에서 남아있는 곳은 발견되는 대로 토큰으로 치환).
+
+토큰 카테고리:
+
+| 카테고리 | 예시 |
+|---|---|
+| Surface | `--color-bg`, `--color-surface`, `--color-surface-2`, `--color-surface-3`, `--color-line`, `--color-line-strong` |
+| Foreground | `--color-text`, `--color-text-strong`, `--color-muted`, `--color-subtle` |
+| Brand/semantic | `--color-accent{-hover,-soft,-contrast}`, `--color-danger{-hover,-soft}`, `--color-success{-soft}`, `--color-warning{-soft}`, `--color-info{-soft}` |
+| Interaction | `--color-hover`, `--color-hover-strong`, `--color-press`, `--color-focus-ring`, `--color-overlay` |
+| Radius | `--radius-xs` 2 · `--radius-sm` 4 · `--radius-md` 6 · `--radius-lg` 10 · `--radius-xl` 14 · `--radius-2xl` 20 · `--radius-full` |
+| Shadow | `--shadow-xs/sm/md/lg`, `--shadow-ring` (focus) |
+| Type | `--text-2xs/xs/sm/md/base/lg/xl/2xl` (10–24px), `--leading-tight/snug/normal` |
+| Motion | `--duration-fast/base`, `--ease-out` |
+| Font | `--font-sans`, `--font-mono` |
+
+전역 스타일(`:focus-visible` → `--shadow-ring`, 스크롤바, `.bg-checker`, `.surface-panel`, `.surface-raised`)도 같은 파일에 있습니다.
+
+### 8.2 프리미티브 (`src/shared/ui/`)
+
+모든 프리미티브는 **CVA(`class-variance-authority`) + `cn()`(clsx + tailwind-merge)** 조합으로 구현합니다. 변형 축(variant/size/tone/shape 등)이 고정되어 있어 디자인 일관성이 컴파일 타임에 강제됩니다.
+
+| 컴포넌트 | 주 variants | 비고 |
+|---|---|---|
+| `Button` | `variant: primary\|secondary\|ghost\|subtle\|danger\|danger-ghost\|link` · `size: xs\|sm\|md\|lg` · `block` · `leadingIcon`/`trailingIcon` | 모든 페이지의 1·2차 액션 |
+| `IconButton` | `variant: ghost\|subtle\|solid\|danger` · `size: xs\|sm\|md\|lg` · `label` 필수 (a11y) | 아이콘만 있는 버튼 |
+| `Input`, `Textarea` | `size: sm\|md\|lg` · `flavor: filled\|bare` | 텍스트 입력 |
+| `Select` | `size: sm\|md\|lg` · 커스텀 chevron | native `<select>` 래퍼 |
+| `Checkbox` | `label`, `description` | 라벨 포함 시 `<label>` 래핑 |
+| `Badge` | `tone: neutral\|muted\|outline\|accent\|success\|warning\|danger\|info` · `size: xs\|sm\|md` · `shape: rect\|pill` · `color?`(클래스 색상) · `swatch?` | 카운트·태그·클래스 pill |
+| `Card` + `CardHeader/Body/Footer` | `variant: panel\|raised\|ghost\|plain` · `padding: none\|sm\|md\|lg` | 섹션 컨테이너 |
+| `Modal` + `ModalHeader/Body/Footer` | `size: sm\|md\|lg\|xl\|full` · ESC/backdrop dismiss 옵션 | `--color-overlay` + `backdrop-blur` |
+| `SegmentedControl<T>` | `size: sm\|md` · 제네릭 value | 정렬/필터/탭 UI |
+| `Menu` + `MenuItem/Separator/Label` | `tone: default\|danger` · fixed position | 우클릭·드롭다운 메뉴 |
+| `Toolbar` + `ToolbarDivider` | — | IconButton grouping |
+| `Kbd` | — | 단축키 표시 (`<kbd>`) |
+| `FieldLabel` | `required`, `hint` | 폼 라벨 |
+
+barrel: `@/shared/ui`에서 전부 re-export. 새 프리미티브 추가 시 반드시 `src/shared/ui/index.ts`에 export 추가.
+
+### 8.3 어떤 레이어가 import할 수 있나
+
+`shared/*`는 모든 레이어가 import 가능하다는 원래 규칙에 따라 **shell, 모든 feature, `app/*`** 전부 `@/shared/ui`에서 자유롭게 가져다 씁니다. 별도 ESLint 예외를 추가할 필요 없음. feature 간 공유 UI는 여전히 금지이며(§2), 재사용 대상은 `shared/ui/`로 승격합니다.
+
+### 8.4 새 UI 작업 절차
+
+1. 기존 프리미티브로 조합 가능한지 먼저 확인.
+2. 두 곳 이상에서 같은 스타일이 반복되면 → 프리미티브에 **variant 추가** (새 컴포넌트 만들기 전에).
+3. 완전히 새로운 도메인(예: Tooltip, Tabs, Popover)이면 `src/shared/ui/<Name>.tsx` 추가 + `index.ts` export + 본 섹션 표에 한 줄 추가.
+4. 토큰에 없는 색/반경/그림자가 필요하면 **먼저 `@theme`에 토큰을 추가하고 그걸 쓴다** — 컴포넌트 내부에서 생 hex 금지.
+5. 상호작용 상태는 토큰으로: hover → `--color-hover`, focus → `:focus-visible` 전역 ring, disabled → `opacity-40 cursor-not-allowed` (프리미티브에 이미 포함).
 
 ---
 

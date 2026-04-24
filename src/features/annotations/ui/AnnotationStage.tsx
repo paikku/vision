@@ -365,7 +365,7 @@ export function AnnotationStage() {
         if (!cls) return null;
         return (
           <div
-            className="pointer-events-none fixed z-50 select-none rounded px-2 py-0.5 text-xs font-semibold text-white shadow-md"
+            className="pointer-events-none fixed z-50 select-none rounded-[var(--radius-xs)] px-2 py-0.5 text-[var(--text-xs)] font-semibold text-white shadow-[var(--shadow-sm)]"
             style={{ left: cursorPos.x + 14, top: cursorPos.y + 14, background: cls.color }}
           >
             {cls.name}
@@ -374,11 +374,11 @@ export function AnnotationStage() {
       })()}
 
       {/* Zoom controls — double-click stage to reset */}
-      <div className="absolute right-3 top-3 flex items-center gap-1 rounded-md bg-black/60 p-1 text-xs text-white backdrop-blur">
+      <div className="absolute right-3 top-3 flex items-center gap-0.5 rounded-[var(--radius-md)] border border-white/10 bg-black/60 p-1 text-[var(--text-xs)] text-white shadow-[var(--shadow-sm)] backdrop-blur">
         <button
           type="button"
           onClick={() => zoomFromCenter(1 / 1.2)}
-          className="rounded px-2 py-1 hover:bg-white/10"
+          className="inline-flex h-6 w-7 items-center justify-center rounded-[var(--radius-sm)] transition-colors hover:bg-white/10"
         >
           −
         </button>
@@ -388,18 +388,19 @@ export function AnnotationStage() {
         <button
           type="button"
           onClick={() => zoomFromCenter(1.2)}
-          className="rounded px-2 py-1 hover:bg-white/10"
+          className="inline-flex h-6 w-7 items-center justify-center rounded-[var(--radius-sm)] transition-colors hover:bg-white/10"
         >
           +
         </button>
         <button
           type="button"
           onClick={resetZoom}
-          className="rounded px-2 py-1 hover:bg-white/10"
+          className="inline-flex h-6 items-center rounded-[var(--radius-sm)] px-2 transition-colors hover:bg-white/10"
         >
           fit
         </button>
-        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+        <span aria-hidden className="mx-1 h-4 w-px bg-white/10" />
+        <label className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] px-2 transition-colors hover:bg-white/10">
           <input
             type="checkbox"
             checked={keepZoomOnFrameChange}
@@ -408,37 +409,41 @@ export function AnnotationStage() {
               setKeepZoomOnFrameChange(checked);
               if (!checked) resetZoom();
             }}
+            className="h-3 w-3 accent-[var(--color-accent)]"
           />
           zoom 유지
         </label>
-        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+        <label className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] px-2 transition-colors hover:bg-white/10">
           <input
             type="checkbox"
             checked={interactionMode === "edit"}
             onChange={(e) => setInteractionMode(e.target.checked ? "edit" : "draw")}
+            className="h-3 w-3 accent-[var(--color-accent)]"
           />
           edit (C)
         </label>
-        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+        <label className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] px-2 transition-colors hover:bg-white/10">
           <input
             type="checkbox"
             checked={showRectLabels}
             onChange={(e) => setShowRectLabels(e.target.checked)}
+            className="h-3 w-3 accent-[var(--color-accent)]"
           />
           라벨
         </label>
-        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+        <label className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] px-2 transition-colors hover:bg-white/10">
           <input
             type="checkbox"
             checked={showCursorLabel}
             onChange={(e) => setShowCursorLabel(e.target.checked)}
+            className="h-3 w-3 accent-[var(--color-accent)]"
           />
           커서라벨
         </label>
       </div>
 
       {/* Footer status */}
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-black/55 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
+      <div className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius-md)] border border-white/10 bg-black/55 px-2 py-1 text-[var(--text-xs)] text-white/85 shadow-[var(--shadow-sm)] backdrop-blur">
         {frame.width}×{frame.height} · {frameAnnotations.length} labels ·{" "}
         {interactionMode === "draw" ? tool.name.toLowerCase() : "edit"} · scroll to zoom · dblclick to fit
       </div>

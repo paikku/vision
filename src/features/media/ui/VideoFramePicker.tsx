@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { Button, Kbd } from "@/shared/ui";
 import {
   buildVideoSprite,
   captureFrameFromVideoElement,
@@ -175,7 +176,7 @@ export function VideoFramePicker() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 bg-[var(--color-surface)] p-3">
-      <div className="relative min-h-[280px] flex-1 overflow-hidden rounded-md bg-black">
+      <div className="relative min-h-[280px] flex-1 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-line)] bg-black">
         <video
           ref={videoRef}
           src={media.url}
@@ -189,7 +190,7 @@ export function VideoFramePicker() {
 
       <div className="space-y-2">
         <div
-          className="relative h-10 overflow-hidden rounded-md border border-[var(--color-line)]"
+          className="relative h-10 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-line)]"
           onMouseMove={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
@@ -243,7 +244,7 @@ export function VideoFramePicker() {
           ))}
           {sprite && hoverX !== null && hoverTime !== null && spriteIndex >= 0 && (
             <div
-              className="pointer-events-none absolute bottom-full mb-1 overflow-hidden rounded border border-[var(--color-line)] bg-black"
+              className="pointer-events-none absolute bottom-full mb-1 overflow-hidden rounded-[var(--radius-sm)] border border-[var(--color-line)] bg-black shadow-[var(--shadow-md)]"
               style={{
                 left: `clamp(0px, ${hoverX - sprite.cellWidth / 2}px, calc(100% - ${sprite.cellWidth}px))`,
                 width: sprite.cellWidth,
@@ -258,14 +259,17 @@ export function VideoFramePicker() {
                   backgroundSize: `${sprite.width}px ${sprite.height}px`,
                 }}
               />
-              <div className="px-1 py-0.5 text-center text-[10px] text-white">{formatTime(hoverTime)}</div>
+              <div className="px-1 py-0.5 text-center text-[var(--text-2xs)] text-white">
+                {formatTime(hoverTime)}
+              </div>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-          <button
-            type="button"
+        <div className="flex items-center gap-2 text-[var(--text-xs)] text-[var(--color-muted)]">
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => {
               const v = videoRef.current;
               if (!v) return;
@@ -274,10 +278,9 @@ export function VideoFramePicker() {
                 void v.play();
               } else v.pause();
             }}
-            className="rounded border border-[var(--color-line)] px-2 py-1 text-[var(--color-text)] hover:border-[var(--color-accent)]"
           >
             play / pause
-          </button>
+          </Button>
           <input
             type="range"
             min={0}
@@ -291,7 +294,7 @@ export function VideoFramePicker() {
             }}
             className="flex-1 accent-[var(--color-accent)]"
           />
-          <span className="tabular-nums">
+          <span className="tabular-nums text-[var(--color-text)]">
             {formatTime(time)} / {formatTime(duration)}
           </span>
         </div>
@@ -306,17 +309,18 @@ export function VideoFramePicker() {
       />
 
       {spriteProgress && (
-        <div className="text-xs text-[var(--color-muted)]">
+        <div className="text-[var(--text-xs)] text-[var(--color-muted)]">
           building timeline {spriteProgress.done}/{spriteProgress.total}…
         </div>
       )}
       {sampleProgress && (
-        <div className="text-xs text-[var(--color-muted)]">
+        <div className="text-[var(--text-xs)] text-[var(--color-muted)]">
           extracting frames {sampleProgress.done}/{sampleProgress.total}…
         </div>
       )}
-      <div className="text-[10px] text-[var(--color-muted)]">
-        Shortcuts: Space play/pause · C capture · ←/→ seek 1s (Shift = 5s)
+      <div className="flex flex-wrap items-center gap-1 text-[var(--text-2xs)] text-[var(--color-muted)]">
+        Shortcuts: <Kbd>Space</Kbd> play/pause · <Kbd>C</Kbd> capture · <Kbd>←</Kbd>/<Kbd>→</Kbd> seek 1s
+        (<Kbd>Shift</Kbd> = 5s)
       </div>
     </div>
   );

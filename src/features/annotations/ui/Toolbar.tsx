@@ -1,6 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
+import { IconButton, cn } from "@/shared/ui";
 import { TOOL_LIST } from "../tools/registry";
 import type { ToolId } from "../types";
 
@@ -15,23 +16,19 @@ export function Toolbar() {
       {TOOL_LIST.map((tool) => {
         const active = tool.id === activeToolId;
         return (
-          <button
-            type="button"
+          <IconButton
             key={tool.id}
+            size="lg"
+            variant="ghost"
             disabled={tool.disabled}
             onClick={() => setActiveTool(tool.id as ToolId)}
-            title={`${tool.name}${tool.shortcut ? ` (${tool.shortcut})` : ""}${tool.disabled ? " · coming soon" : ""}`}
-            className={[
-              "flex h-10 w-10 items-center justify-center rounded-md text-[var(--color-muted)] transition",
-              tool.disabled
-                ? "cursor-not-allowed opacity-40"
-                : active
-                  ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                  : "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]",
-            ].join(" ")}
-          >
-            <ToolIcon id={tool.id as ToolId} />
-          </button>
+            label={`${tool.name}${tool.shortcut ? ` (${tool.shortcut})` : ""}${tool.disabled ? " · coming soon" : ""}`}
+            icon={<ToolIcon id={tool.id as ToolId} />}
+            className={cn(
+              active &&
+                "bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]",
+            )}
+          />
         );
       })}
     </div>

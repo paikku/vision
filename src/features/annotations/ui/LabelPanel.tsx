@@ -2,6 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import {
+  Badge,
+  Button,
+  IconButton,
+  Input,
+  Kbd,
+  Menu,
+  MenuItem,
+  Select,
+  cn,
+} from "@/shared/ui";
 import { BulkApplyModal } from "./BulkApplyModal";
 import type { ClassShortcutKey } from "../types";
 
@@ -43,44 +54,28 @@ export function LabelPanel() {
   const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
 
   const [draftName, setDraftName] = useState("");
-  // Which class row is currently hovered (for shortcut assignment).
   const [hoveredClassId, setHoveredClassId] = useState<string | null>(null);
   const hoveredClassIdRef = useRef(hoveredClassId);
   hoveredClassIdRef.current = hoveredClassId;
 
-  // hoveredAnnotationId comes from the store so canvas hover and panel hover are unified.
   const hoveredAnnotationId = useStore((s) => s.hoveredAnnotationId);
-  const setHoveredAnnotationLocal = useCallback((id: string | null) => {
-    setHoveredAnnotation(id);
-  }, [setHoveredAnnotation]);
+  const setHoveredAnnotationLocal = useCallback(
+    (id: string | null) => {
+      setHoveredAnnotation(id);
+    },
+    [setHoveredAnnotation],
+  );
 
-  // Bulk apply state
   const [bulkAnnotationId, setBulkAnnotationId] = useState<string | null>(null);
   const [annotCtxMenu, setAnnotCtxMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
-  // Close annotation context menu on outside click
-  useEffect(() => {
-    if (!annotCtxMenu) return;
-    const handler = () => setAnnotCtxMenu(null);
-    window.addEventListener("pointerdown", handler);
-    return () => window.removeEventListener("pointerdown", handler);
-  }, [annotCtxMenu]);
+  const frameAnnotations = annotations.filter((a) => a.frameId === activeFrameId);
 
-  const frameAnnotations = annotations.filter(
-    (a) => a.frameId === activeFrameId,
-  );
-
-  // Capture-phase listener priority rules:
-  //   1. Hovering a class row + Q/W/E/R → assign shortcut to that class
-  //   2. Hovering an annotation row + Delete/Backspace → remove hovered annotation
-  //   3. Hovering an annotation row + Q/W/E/R → change hovered annotation class
-  // stopImmediatePropagation prevents the bubble-phase useKeyboardShortcuts handler from also firing.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
       const key = e.key.toLowerCase();
 
-      // Priority 1: hovering a class row + Q/W/E/R → assign shortcut + activate class
       if (CLASS_SHORTCUT_KEYS.includes(key as ClassShortcutKey)) {
         const hoveredClass = hoveredClassIdRef.current;
         if (hoveredClass) {
@@ -92,10 +87,8 @@ export function LabelPanel() {
         }
       }
 
-      // Priority 2: hovering an annotation row
       const hoveredAnnotation = useStore.getState().hoveredAnnotationId;
       if (hoveredAnnotation) {
-        // Delete/Backspace → remove hovered annotation
         if (REMOVE_KEYS.has(key)) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -103,7 +96,6 @@ export function LabelPanel() {
           setHoveredAnnotationLocal(null);
           return;
         }
-        // Q/W/E/R → change hovered annotation's class
         if (CLASS_SHORTCUT_KEYS.includes(key as ClassShortcutKey)) {
           const klass = useStore.getState().classes.find((c) => c.shortcutKey === key);
           if (klass) {
@@ -116,175 +108,80 @@ export function LabelPanel() {
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [removeAnnotation, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
+  }, [removeAnnotation, setActiveClass, setClassShortcut, setHoveredAnnotationLocal, updateAnnotation]);
 
   return (
     <>
-    <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-sm">
-      <Section title="Classes">
-        <p className="mb-2 text-[10px] text-[var(--color-muted)]">
-          Hover a class, press <Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> to assign shortcut.
-        </p>
-        <ul className="space-y-1">
-          {classes.map((c) => {
-            const active = c.id === activeClassId;
-            const isHovered = c.id === hoveredClassId;
-            return (
-              <li
-                key={c.id}
-                onMouseEnter={() => setHoveredClassId(c.id)}
-                onMouseLeave={() => setHoveredClassId(null)}
-                className={[
-                  "group flex items-center gap-2 rounded px-2 py-1.5 transition",
-                  active
-                    ? "bg-[var(--color-accent-soft)]"
-                    : isHovered
-                      ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]/40"
-                      : "hover:bg-[var(--color-surface-2)]",
-                ].join(" ")}
-              >
-                <button
-                  type="button"
-                  onClick={() => setActiveClass(c.id)}
-                  className="flex flex-1 items-center gap-2 text-left"
-                >
-                  <label
-                    title="Click to change color"
-                    className="h-3.5 w-3.5 shrink-0 cursor-pointer rounded-sm ring-offset-1 hover:ring-2 hover:ring-[var(--color-accent)]"
-                    style={{ background: c.color }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="color"
-                      value={c.color}
-                      onChange={(e) => setClassColor(c.id, e.target.value)}
-                      className="sr-only"
-                    />
-                  </label>
-                  <input
-                    value={c.name}
-                    onChange={(e) => renameClass(c.id, e.target.value)}
-                    className="flex-1 bg-transparent outline-none"
-                  />
-                </button>
-
-                {/* Shortcut badge — shows assigned key or placeholder on hover */}
-                <div className="shrink-0">
-                  {c.shortcutKey ? (
-                    <button
-                      type="button"
-                      title="Click to clear shortcut"
-                      onClick={() => setClassShortcut(c.id, null)}
-                      className="flex h-5 w-5 items-center justify-center rounded border border-[var(--color-accent)]/60 bg-[var(--color-accent-soft)] font-mono text-[10px] text-[var(--color-accent)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)]"
-                    >
-                      {c.shortcutKey.toUpperCase()}
-                    </button>
-                  ) : isHovered ? (
-                    <span className="flex h-5 w-5 items-center justify-center rounded border border-dashed border-[var(--color-line)] font-mono text-[10px] text-[var(--color-muted)]">
-                      ?
-                    </span>
-                  ) : null}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => removeClass(c.id)}
-                  className="invisible text-xs text-[var(--color-muted)] hover:text-[var(--color-danger)] group-hover:visible"
-                  title="Remove class"
-                >
-                  ×
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        <form
-          className="mt-2 flex gap-1"
-          onSubmit={(e) => {
-            e.preventDefault();
-            addClass(draftName);
-            setDraftName("");
-          }}
-        >
-          <input
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            placeholder="new class name"
-            className="flex-1 rounded border border-[var(--color-line)] bg-[var(--color-surface-2)] px-2 py-1 text-xs outline-none focus:border-[var(--color-accent)]"
-          />
-          <button
-            type="submit"
-            className="rounded border border-[var(--color-line)] px-2 py-1 text-xs hover:border-[var(--color-accent)]"
-          >
-            add
-          </button>
-        </form>
-      </Section>
-
-      <Section title={`Annotations · ${frameAnnotations.length}`}>
-        {frameAnnotations.length === 0 ? (
-          <p className="text-xs text-[var(--color-muted)]">
-            Drag on the image to draw a box.
+      <div className="flex h-full w-72 flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--text-sm)]">
+        <Section title="Classes">
+          <p className="mb-2 flex flex-wrap items-center gap-1 text-[var(--text-2xs)] text-[var(--color-muted)]">
+            Hover a class, press <Kbd>Q</Kbd><Kbd>W</Kbd><Kbd>E</Kbd><Kbd>R</Kbd> to assign shortcut.
           </p>
-        ) : (
           <ul className="space-y-1">
-            {frameAnnotations.map((a, idx) => {
-              const klass = classes.find((c) => c.id === a.classId);
-              const selected = a.id === selectedAnnotationId;
-              const isHovered = a.id === hoveredAnnotationId;
+            {classes.map((c) => {
+              const active = c.id === activeClassId;
+              const isHovered = c.id === hoveredClassId;
               return (
                 <li
-                  key={a.id}
-                  onMouseEnter={() => setHoveredAnnotationLocal(a.id)}
-                  onMouseLeave={() => setHoveredAnnotationLocal(null)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setAnnotCtxMenu({ id: a.id, x: e.clientX, y: e.clientY });
-                  }}
-                  className={[
-                    "group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition",
-                    selected
+                  key={c.id}
+                  onMouseEnter={() => setHoveredClassId(c.id)}
+                  onMouseLeave={() => setHoveredClassId(null)}
+                  className={cn(
+                    "group flex items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 transition-colors",
+                    active
                       ? "bg-[var(--color-accent-soft)]"
                       : isHovered
                         ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]/40"
-                        : "hover:bg-[var(--color-surface-2)]",
-                  ].join(" ")}
+                        : "hover:bg-[var(--color-hover)]",
+                  )}
                 >
                   <button
                     type="button"
-                    onClick={() => selectAnnotation(a.id)}
+                    onClick={() => setActiveClass(c.id)}
                     className="flex flex-1 items-center gap-2 text-left"
                   >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-sm"
-                      style={{ background: klass?.color ?? "#888" }}
+                    <label
+                      title="Click to change color"
+                      className="h-3.5 w-3.5 shrink-0 cursor-pointer rounded-[var(--radius-xs)] ring-offset-1 transition-shadow hover:ring-2 hover:ring-[var(--color-accent)]"
+                      style={{ background: c.color }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="color"
+                        value={c.color}
+                        onChange={(e) => setClassColor(c.id, e.target.value)}
+                        className="sr-only"
+                      />
+                    </label>
+                    <input
+                      value={c.name}
+                      onChange={(e) => renameClass(c.id, e.target.value)}
+                      className="flex-1 bg-transparent text-[var(--text-sm)] text-[var(--color-text)] outline-none"
                     />
-                    <span className="flex-1 truncate">
-                      #{idx + 1} · {klass?.name ?? "—"}
-                    </span>
                   </button>
-                  {isHovered && (
-                    <span className="shrink-0 text-[10px] text-[var(--color-muted)]">
-                      QWER→class
-                    </span>
-                  )}
-                  <select
-                    value={a.classId}
-                    onChange={(e) =>
-                      updateAnnotation(a.id, { classId: e.target.value })
-                    }
-                    className="rounded bg-[var(--color-surface-2)] px-1 py-0.5 text-[11px] outline-none"
-                  >
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+
+                  <div className="shrink-0">
+                    {c.shortcutKey ? (
+                      <button
+                        type="button"
+                        title="Click to clear shortcut"
+                        onClick={() => setClassShortcut(c.id, null)}
+                        className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-xs)] border border-[var(--color-accent)]/60 bg-[var(--color-accent-soft)] font-mono text-[var(--text-2xs)] text-[var(--color-accent)] transition-colors hover:border-[var(--color-danger)] hover:text-[var(--color-danger)]"
+                      >
+                        {c.shortcutKey.toUpperCase()}
+                      </button>
+                    ) : isHovered ? (
+                      <span className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-xs)] border border-dashed border-[var(--color-line)] font-mono text-[var(--text-2xs)] text-[var(--color-muted)]">
+                        ?
+                      </span>
+                    ) : null}
+                  </div>
+
                   <button
                     type="button"
-                    onClick={() => removeAnnotation(a.id)}
-                    className="invisible text-[var(--color-muted)] hover:text-[var(--color-danger)] group-hover:visible"
+                    onClick={() => removeClass(c.id)}
+                    className="invisible text-[var(--text-sm)] text-[var(--color-muted)] transition-colors hover:text-[var(--color-danger)] group-hover:visible"
+                    title="Remove class"
                   >
                     ×
                   </button>
@@ -292,47 +189,140 @@ export function LabelPanel() {
               );
             })}
           </ul>
-        )}
-      </Section>
+          <form
+            className="mt-2 flex gap-1"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addClass(draftName);
+              setDraftName("");
+            }}
+          >
+            <Input
+              size="sm"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              placeholder="new class name"
+              className="flex-1"
+            />
+            <Button type="submit" variant="secondary" size="sm">
+              add
+            </Button>
+          </form>
+        </Section>
 
-      <Section title="Shortcuts">
-        <ul className="space-y-1 text-xs text-[var(--color-muted)]">
-          <li><Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class</li>
-          <li>hover annotation + <Key>Q</Key>–<Key>R</Key> change class</li>
-          <li><Key>D</Key> delete selected / hovered box</li>
-          <li><Key>1</Key> prev frame · <Key>2</Key> next frame</li>
-          <li><Key>C</Key> toggle draw/edit · <Key>Esc</Key> cancel draw</li>
-          <li>scroll → zoom · dblclick → fit</li>
-        </ul>
-      </Section>
-    </div>
+        <Section title={`Annotations · ${frameAnnotations.length}`}>
+          {frameAnnotations.length === 0 ? (
+            <p className="text-[var(--text-xs)] text-[var(--color-muted)]">
+              Drag on the image to draw a box.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {frameAnnotations.map((a, idx) => {
+                const klass = classes.find((c) => c.id === a.classId);
+                const selected = a.id === selectedAnnotationId;
+                const isHovered = a.id === hoveredAnnotationId;
+                return (
+                  <li
+                    key={a.id}
+                    onMouseEnter={() => setHoveredAnnotationLocal(a.id)}
+                    onMouseLeave={() => setHoveredAnnotationLocal(null)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setAnnotCtxMenu({ id: a.id, x: e.clientX, y: e.clientY });
+                    }}
+                    className={cn(
+                      "group flex items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-[var(--text-xs)] transition-colors",
+                      selected
+                        ? "bg-[var(--color-accent-soft)]"
+                        : isHovered
+                          ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]/40"
+                          : "hover:bg-[var(--color-hover)]",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectAnnotation(a.id)}
+                      className="flex flex-1 items-center gap-2 text-left"
+                    >
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-[var(--radius-xs)]"
+                        style={{ background: klass?.color ?? "#888" }}
+                      />
+                      <span className="flex-1 truncate text-[var(--color-text)]">
+                        #{idx + 1} · {klass?.name ?? "—"}
+                      </span>
+                    </button>
+                    {isHovered && (
+                      <Badge tone="muted" size="xs">
+                        QWER→class
+                      </Badge>
+                    )}
+                    <Select
+                      size="sm"
+                      value={a.classId}
+                      onChange={(e) => updateAnnotation(a.id, { classId: e.target.value })}
+                      className="h-6 text-[var(--text-2xs)]"
+                    >
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </Select>
+                    <IconButton
+                      label="삭제"
+                      size="xs"
+                      variant="danger"
+                      onClick={() => removeAnnotation(a.id)}
+                      className="invisible group-hover:visible"
+                      icon={<span aria-hidden>×</span>}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Section>
 
-    {/* Annotation right-click context menu */}
-    {annotCtxMenu && (
-      <div
-        className="fixed z-50 overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] py-1 shadow-xl text-sm"
-        style={{ top: annotCtxMenu.y, left: annotCtxMenu.x }}
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          className="block w-full px-4 py-2 text-left text-xs hover:bg-[var(--color-surface-2)]"
-          onClick={() => { setBulkAnnotationId(annotCtxMenu.id); setAnnotCtxMenu(null); }}
-        >
-          일괄 적용…
-        </button>
+        <Section title="Shortcuts">
+          <ul className="space-y-1.5 text-[var(--text-xs)] text-[var(--color-muted)]">
+            <li className="flex flex-wrap items-center gap-1"><Kbd>Q</Kbd><Kbd>W</Kbd><Kbd>E</Kbd><Kbd>R</Kbd> switch active class</li>
+            <li className="flex flex-wrap items-center gap-1">hover annotation + <Kbd>Q</Kbd>–<Kbd>R</Kbd> change class</li>
+            <li className="flex flex-wrap items-center gap-1"><Kbd>D</Kbd> delete selected / hovered box</li>
+            <li className="flex flex-wrap items-center gap-1"><Kbd>1</Kbd> prev frame · <Kbd>2</Kbd> next frame</li>
+            <li className="flex flex-wrap items-center gap-1"><Kbd>C</Kbd> toggle draw/edit · <Kbd>Esc</Kbd> cancel draw</li>
+            <li>scroll → zoom · dblclick → fit</li>
+          </ul>
+        </Section>
       </div>
-    )}
 
-    <BulkApplyTrigger
-      annotationId={bulkAnnotationId}
-      annotations={annotations}
-      frames={frames}
-      exceptedFrameIds={exceptedFrameIds}
-      classes={classes}
-      addAnnotation={addAnnotation}
-      onClose={() => setBulkAnnotationId(null)}
-    />
+      {annotCtxMenu && (
+        <Menu
+          open
+          onClose={() => setAnnotCtxMenu(null)}
+          x={annotCtxMenu.x}
+          y={annotCtxMenu.y}
+        >
+          <MenuItem
+            onClick={() => {
+              setBulkAnnotationId(annotCtxMenu.id);
+              setAnnotCtxMenu(null);
+            }}
+          >
+            일괄 적용…
+          </MenuItem>
+        </Menu>
+      )}
+
+      <BulkApplyTrigger
+        annotationId={bulkAnnotationId}
+        annotations={annotations}
+        frames={frames}
+        exceptedFrameIds={exceptedFrameIds}
+        classes={classes}
+        addAnnotation={addAnnotation}
+        onClose={() => setBulkAnnotationId(null)}
+      />
     </>
   );
 }
@@ -385,18 +375,10 @@ function Section({
 }) {
   return (
     <section className="border-b border-[var(--color-line)] p-3">
-      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+      <h3 className="mb-2 text-[var(--text-2xs)] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
         {title}
       </h3>
       {children}
     </section>
-  );
-}
-
-function Key({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded border border-[var(--color-line)] bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text)]">
-      {children}
-    </kbd>
   );
 }

@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { selectVisibleFrames, useStore } from "@/lib/store";
+import { Badge, SegmentedControl, cn } from "@/shared/ui";
 import type { FrameFilterMode, FrameSortOrder } from "../slice";
 
 // Virtualization constants. Item height is measured at runtime from the first
-// rendered row so we adapt to any layout tweaks — these are only the initial
-// estimate and the overscan buffer.
+// rendered row — these are only the initial estimate and the overscan buffer.
 const DEFAULT_ITEM_HEIGHT = 200;
 const OVERSCAN = 4;
-const ITEM_GAP = 8; // matches the old space-y-2 gap between rows
-const LIST_PADDING = 12; // matches p-3 on the scroll container
+const ITEM_GAP = 8;
+const LIST_PADDING = 12;
 
 export function FrameStrip() {
   const frames = useStore((s) => s.frames);
@@ -32,8 +32,6 @@ export function FrameStrip() {
   const [itemHeight, setItemHeight] = useState(DEFAULT_ITEM_HEIGHT);
   const scrollRafRef = useRef<number | null>(null);
 
-  // Coalesce scroll updates to one per frame — firing setState on every
-  // pixel of wheel scroll is what makes long strips feel sticky.
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     if (scrollRafRef.current !== null) return;
@@ -51,7 +49,6 @@ export function FrameStrip() {
     };
   }, []);
 
-  // annotation count per frame
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     for (const a of annotations) {
@@ -60,36 +57,31 @@ export function FrameStrip() {
     return map;
   }, [annotations]);
 
-  // class breakdown per frame: { classId → count }
   const classCounts = useMemo(() => {
     const map = new Map<string, Map<string, number>>();
     for (const a of annotations) {
       let inner = map.get(a.frameId);
-      if (!inner) { inner = new Map(); map.set(a.frameId, inner); }
+      if (!inner) {
+        inner = new Map();
+        map.set(a.frameId, inner);
+      }
       inner.set(a.classId, (inner.get(a.classId) ?? 0) + 1);
     }
     return map;
   }, [annotations]);
 
-  // Precompute original insertion index per frame id. `frames.indexOf(f)` in
-  // the render loop is O(n²) when the strip holds thousands of frames.
   const originalIndex = useMemo(() => {
     const map = new Map<string, number>();
     frames.forEach((f, i) => map.set(f.id, i));
     return map;
   }, [frames]);
 
-  // Class lookup by id — same reason: avoid per-row linear scans.
   const classById = useMemo(() => {
     const map = new Map<string, (typeof classes)[number]>();
     for (const c of classes) map.set(c.id, c);
     return map;
   }, [classes]);
 
-  // Visible list mirrors what `useKeyboardShortcuts` uses for 1/2 nav, so
-  // keyboard stepping and the strip always agree on the current slice.
-  // Compute via useMemo rather than a zustand selector because the selector
-  // returns a new array each call, which would thrash referential equality.
   const filtered = useMemo(
     () =>
       selectVisibleFrames({
@@ -102,12 +94,8 @@ export function FrameStrip() {
     [frames, annotations, exceptedFrameIds, sort, filter],
   );
 
-  // Total scrollable height for all items. The last item doesn't need a
-  // trailing gap, so one `itemHeight` unit already over-counts by the gap.
-  // That's fine — it just leaves a tiny bit of dead space at the bottom.
   const totalHeight = filtered.length * itemHeight;
 
-  // Track viewport size so the visible range stays correct on resize.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -118,8 +106,6 @@ export function FrameStrip() {
     return () => ro.disconnect();
   }, []);
 
-  // Measure actual row stride (item height + gap) from the first rendered
-  // row. We pass this callback via ref on the first visible item below.
   const measureItem = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     const h = node.getBoundingClientRect().height + ITEM_GAP;
@@ -134,14 +120,10 @@ export function FrameStrip() {
   );
   const endIdx = Math.min(
     filtered.length,
-    Math.ceil((scrollTop - LIST_PADDING + viewportHeight) / itemHeight) +
-      OVERSCAN,
+    Math.ceil((scrollTop - LIST_PADDING + viewportHeight) / itemHeight) + OVERSCAN,
   );
   const visibleSlice = filtered.slice(startIdx, endIdx);
 
-  // Scroll active frame into view when selection changes. With virtualization
-  // the item may not be in the DOM, so compute the target scrollTop from the
-  // active frame's index in `filtered`.
   useEffect(() => {
     const el = scrollRef.current;
     if (!activeFrameId || !el) return;
@@ -163,51 +145,46 @@ export function FrameStrip() {
 
   if (frames.length === 0) {
     return (
-      <div className="px-3 py-6 text-center text-xs text-[var(--color-muted)]">
+      <div className="px-3 py-6 text-center text-[var(--text-xs)] text-[var(--color-muted)]">
         Capture frames to start labeling.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col">
-      {/* Sort + filter controls */}
-      <div className="flex shrink-0 flex-col gap-1 border-b border-[var(--color-line)] px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-[var(--color-muted)] w-8 shrink-0">정렬</span>
-          {(["added", "time"] as FrameSortOrder[]).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setSort(s)}
-              className={[
-                "rounded px-2 py-0.5 text-[10px] transition",
-                sort === s
-                  ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                  : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
-              ].join(" ")}
-            >
-              {s === "added" ? "추가순" : "시간순"}
-            </button>
-          ))}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-col gap-1.5 border-b border-[var(--color-line)] px-2 py-2">
+        <div className="flex items-center gap-2">
+          <span className="w-8 shrink-0 text-[var(--text-2xs)] uppercase tracking-wide text-[var(--color-muted)]">
+            정렬
+          </span>
+          <SegmentedControl<FrameSortOrder>
+            size="sm"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "added", label: "추가순" },
+              { value: "time", label: "시간순" },
+            ]}
+            aria-label="프레임 정렬"
+            className="flex-1"
+          />
         </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-[var(--color-muted)] w-8 shrink-0">필터</span>
-          {(["all", "unlabeled"] as FrameFilterMode[]).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={[
-                "rounded px-2 py-0.5 text-[10px] transition",
-                filter === f
-                  ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                  : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
-              ].join(" ")}
-            >
-              {f === "all" ? "전체" : "미라벨"}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <span className="w-8 shrink-0 text-[var(--text-2xs)] uppercase tracking-wide text-[var(--color-muted)]">
+            필터
+          </span>
+          <SegmentedControl<FrameFilterMode>
+            size="sm"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: "all", label: "전체" },
+              { value: "unlabeled", label: "미라벨" },
+            ]}
+            aria-label="프레임 필터"
+            className="flex-1"
+          />
         </div>
       </div>
 
@@ -217,16 +194,14 @@ export function FrameStrip() {
         className="flex-1 overflow-y-auto"
       >
         {filtered.length === 0 ? (
-          <p className="py-4 text-center text-xs text-[var(--color-muted)]">
+          <p className="py-4 text-center text-[var(--text-xs)] text-[var(--color-muted)]">
             {filter === "unlabeled" ? "미라벨 프레임 없음" : "프레임 없음"}
           </p>
         ) : (
           <div
             role="list"
             className="relative px-3"
-            style={{
-              height: totalHeight + LIST_PADDING * 2,
-            }}
+            style={{ height: totalHeight + LIST_PADDING * 2 }}
           >
             {visibleSlice.map((f, i) => {
               const absIdx = startIdx + i;
@@ -252,12 +227,12 @@ export function FrameStrip() {
                   <button
                     type="button"
                     onClick={() => setActiveFrame(f.id)}
-                    className={[
-                      "group relative block w-full overflow-hidden rounded-md border text-left transition",
+                    className={cn(
+                      "group relative block w-full overflow-hidden rounded-[var(--radius-md)] border text-left transition-colors",
                       active
                         ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30"
-                        : "border-[var(--color-line)] hover:border-[var(--color-muted)]",
-                    ].join(" ")}
+                        : "border-[var(--color-line)] hover:border-[var(--color-line-strong)]",
+                    )}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
@@ -268,58 +243,63 @@ export function FrameStrip() {
                       className="aspect-video w-full bg-black object-contain"
                     />
 
-                    {/* Footer: index + label + annotation count */}
-                    <div className="flex items-center justify-between bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-muted)]">
-                      <span className="tabular-nums truncate">
+                    <div className="flex items-center justify-between bg-[var(--color-surface)] px-2 py-1 text-[var(--text-2xs)] text-[var(--color-muted)]">
+                      <span className="truncate tabular-nums">
                         #{String(originalIdx + 1).padStart(2, "0")} · {f.label}
                       </span>
-                      <span className="ml-1 shrink-0 rounded-full bg-[var(--color-surface-2)] px-1.5 text-[10px] text-[var(--color-text)]">
+                      <Badge tone="neutral" size="xs" shape="pill" className="ml-1 shrink-0">
                         {count}
-                      </span>
+                      </Badge>
                     </div>
 
-                    {/* Class breakdown badges or except indicator (bottom-left, same row) */}
-                    <div className="flex flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1 min-h-[18px]">
+                    <div className="flex min-h-[18px] flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1">
                       {count === 0 ? (
                         <span
                           role="button"
                           aria-label={excepted ? "제외 해제" : "라벨 제외"}
                           title={excepted ? "미라벨 필터에서 제외 해제" : "미라벨 필터에서 제외"}
-                          onClick={(e) => { e.stopPropagation(); toggleFrameException(f.id); }}
-                          className={[
-                            "flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] cursor-pointer transition",
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFrameException(f.id);
+                          }}
+                          className={cn(
+                            "inline-flex cursor-pointer items-center gap-0.5 rounded-[var(--radius-full)] px-2 py-px text-[var(--text-2xs)] transition-colors",
                             excepted
                               ? "bg-[var(--color-accent)]/80 text-white"
-                              : "invisible group-hover:visible bg-[var(--color-surface-2)] text-[var(--color-muted)]",
-                          ].join(" ")}
+                              : "invisible bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:bg-[var(--color-surface-3)] hover:text-[var(--color-text)] group-hover:visible",
+                          )}
                         >
                           {excepted ? "제외됨" : "제외"}
                         </span>
                       ) : (
-                        frameClassCounts && [...frameClassCounts.entries()].map(([cid, n]) => {
+                        frameClassCounts &&
+                        [...frameClassCounts.entries()].map(([cid, n]) => {
                           const klass = classById.get(cid);
                           if (!klass) return null;
                           return (
-                            <span
+                            <Badge
                               key={cid}
-                              className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] text-white"
-                              style={{ background: klass.color }}
+                              size="xs"
+                              shape="pill"
+                              color={klass.color}
                               title={klass.name}
+                              swatch={<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />}
                             >
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/50" />
                               {n}
-                            </span>
+                            </Badge>
                           );
                         })
                       )}
                     </div>
 
-                    {/* Remove button */}
                     <span
                       role="button"
                       aria-label="Remove frame"
-                      onClick={(e) => { e.stopPropagation(); removeFrame(f.id); }}
-                      className="absolute right-1 top-1 hidden h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/60 text-xs text-white group-hover:flex"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFrame(f.id);
+                      }}
+                      className="absolute right-1 top-1 hidden h-6 w-6 cursor-pointer items-center justify-center rounded-[var(--radius-full)] bg-black/60 text-[var(--text-xs)] text-white transition-colors hover:bg-[var(--color-danger)] group-hover:flex"
                     >
                       ×
                     </span>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import { Button, Input, SegmentedControl } from "@/shared/ui";
 
 export type ExtractPanelActions = {
   interval: number;
@@ -10,8 +11,10 @@ export type ExtractPanelActions = {
   captureEvenly: () => Promise<void>;
 };
 
+type ExtractTabId = "quick" | "range" | "smart";
+
 type ExtractTab = {
-  id: string;
+  id: ExtractTabId;
   label: string;
   render: (actions: ExtractPanelActions) => ReactNode;
 };
@@ -24,32 +27,37 @@ export function ExtractionPanel(actions: ExtractPanelActions) {
         label: "Quick",
         render: (a) => (
           <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="md"
               disabled={a.busy}
               onClick={() => void a.captureCurrent()}
-              className="rounded-md bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-black disabled:opacity-50"
+              block
             >
               Capture this frame (C)
-            </button>
-            <div className="flex items-center gap-2 rounded-md border border-[var(--color-line)] px-2 py-1 text-xs text-[var(--color-muted)]">
+            </Button>
+            <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface-2)] px-2 py-1 text-[var(--text-xs)] text-[var(--color-muted)]">
               <span>every</span>
-              <input
+              <Input
+                size="sm"
                 type="number"
                 min={1}
                 max={64}
                 value={a.interval}
-                onChange={(e) => a.setInterval(Math.max(1, Number(e.target.value) || 1))}
-                className="w-12 rounded bg-[var(--color-surface-2)] px-1 py-0.5 text-center text-[var(--color-text)] outline-none"
+                onChange={(e) =>
+                  a.setInterval(Math.max(1, Number(e.target.value) || 1))
+                }
+                className="h-6 w-12 text-center"
               />
-              <button
-                type="button"
+              <Button
+                variant="subtle"
+                size="xs"
                 disabled={a.busy}
                 onClick={() => void a.captureEvenly()}
-                className="ml-auto rounded bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-text)] hover:bg-[var(--color-line)] disabled:opacity-50"
+                className="ml-auto"
               >
                 Sample
-              </button>
+              </Button>
             </div>
           </div>
         ),
@@ -58,7 +66,7 @@ export function ExtractionPanel(actions: ExtractPanelActions) {
         id: "range",
         label: "Range",
         render: () => (
-          <div className="rounded-md border border-dashed border-[var(--color-line)] px-3 py-2 text-xs text-[var(--color-muted)]">
+          <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-line)] px-3 py-2 text-[var(--text-xs)] text-[var(--color-muted)]">
             Range extraction preset slot (start/end/step) — reserved for next iteration.
           </div>
         ),
@@ -67,7 +75,7 @@ export function ExtractionPanel(actions: ExtractPanelActions) {
         id: "smart",
         label: "Smart",
         render: () => (
-          <div className="rounded-md border border-dashed border-[var(--color-line)] px-3 py-2 text-xs text-[var(--color-muted)]">
+          <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-line)] px-3 py-2 text-[var(--text-xs)] text-[var(--color-muted)]">
             Smart extraction preset slot (keyframes/scene change) — reserved for next iteration.
           </div>
         ),
@@ -76,31 +84,18 @@ export function ExtractionPanel(actions: ExtractPanelActions) {
     [],
   );
 
-  const [activeTab, setActiveTab] = useState(tabs[0].id);
+  const [activeTab, setActiveTab] = useState<ExtractTabId>(tabs[0].id);
   const current = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1">
-        {tabs.map((tab) => {
-          const active = tab.id === current.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={[
-                "rounded px-2 py-1 text-xs",
-                active
-                  ? "bg-[var(--color-accent)] text-black"
-                  : "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-line)]",
-              ].join(" ")}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <SegmentedControl<ExtractTabId>
+        size="sm"
+        value={activeTab}
+        onChange={setActiveTab}
+        options={tabs.map((t) => ({ value: t.id, label: t.label }))}
+        aria-label="추출 프리셋"
+      />
       {current.render(actions)}
     </div>
   );

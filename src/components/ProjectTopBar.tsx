@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useStore } from "@/lib/store";
+import { Badge } from "@/shared/ui";
 
 export function ProjectTopBar({ projectId }: { projectId: string }) {
   const media = useStore((s) => s.media);
@@ -13,22 +14,22 @@ export function ProjectTopBar({ projectId }: { projectId: string }) {
       <div className="flex items-center gap-3">
         <Link
           href={`/projects/${projectId}`}
-          className="text-xs text-[var(--color-muted)] hover:text-[var(--color-text)]"
+          className="text-[var(--text-sm)] text-[var(--color-muted)] transition-colors hover:text-[var(--color-text)]"
         >
           ← 프로젝트로
         </Link>
         {media && (
           <>
-            <span className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-muted)]">
+            <Badge tone="outline" size="xs" shape="pill" className="uppercase tracking-wide">
               {media.kind}
-            </span>
-            <span className="max-w-[40ch] truncate text-sm font-medium">
+            </Badge>
+            <span className="max-w-[40ch] truncate text-[var(--text-md)] font-medium text-[var(--color-text-strong)]">
               {media.name}
             </span>
           </>
         )}
       </div>
-      <div className="flex items-center gap-2 text-xs">
+      <div className="flex items-center gap-2 text-[var(--text-sm)]">
         {media && (
           <span className="text-[var(--color-muted)]">
             {frames.length} frames · {annotations.length} labels · 자동 저장됨

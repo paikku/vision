@@ -151,13 +151,13 @@ export function ProjectWorkspace({
 
   if (error) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[var(--color-bg)] p-6 text-sm text-[var(--color-danger)]">
-        <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-6">
-          <div className="mb-2 font-semibold">비디오 로드 실패</div>
+      <div className="flex h-screen items-center justify-center bg-[var(--color-bg)] p-6 text-[var(--text-sm)]">
+        <div className="rounded-[var(--radius-lg)] border border-[var(--color-line)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-md)]">
+          <div className="mb-2 font-semibold text-[var(--color-danger)]">비디오 로드 실패</div>
           <div className="mb-4 text-[var(--color-muted)]">{error}</div>
           <Link
             href={`/projects/${projectId}`}
-            className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-black"
+            className="inline-flex h-7 items-center rounded-[var(--radius-md)] bg-[var(--color-accent)] px-3 text-[var(--text-xs)] font-medium text-[var(--color-accent-contrast)] transition-colors hover:bg-[var(--color-accent-hover)]"
           >
             프로젝트로 돌아가기
           </Link>
@@ -172,7 +172,7 @@ export function ProjectWorkspace({
       {media ? (
         <div className="flex min-h-0 flex-1">
           <aside className="flex w-72 shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
-            <div className="border-b border-[var(--color-line)] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+            <div className="border-b border-[var(--color-line)] px-3 py-2 text-[var(--text-2xs)] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
               Frames
             </div>
             <FrameStrip />
@@ -184,7 +184,7 @@ export function ProjectWorkspace({
           <LabelPanel />
         </div>
       ) : (
-        <div className="flex flex-1 items-center justify-center text-sm text-[var(--color-muted)]">
+        <div className="flex flex-1 items-center justify-center text-[var(--text-sm)] text-[var(--color-muted)]">
           불러오는 중…
         </div>
       )}

@@ -30,9 +30,11 @@ src/
     export/                 # 직렬화/다운로드
     projects/               # 프로젝트·비디오·프레임 서버 API 래퍼 (slice 없음, 타입+service만)
 
-  shared/                   # 순수 유틸·범용 훅만
+  shared/                   # 순수 유틸·범용 훅·디자인 시스템
     types.ts                # Point 등 도메인 무관 타입
     hooks/                  # useStageTransform 등 렌더 범용 훅
+    ui/                     # 디자인 시스템 프리미티브 (Button, Modal, Badge, …) — 모든 레이어가 import 허용
+                            # 자세한 규칙·토큰 표는 CLAUDE.md §8 참고
 
   lib/
     store.ts                # 슬라이스 합성 루트 (공개 API 단일 지점)
@@ -65,7 +67,7 @@ features/<name>/
 - `features/<A>/*` → 같은 feature 내부, `shared/*`, `lib/store`
 - `features/<A>/*` → `features/<B>/types` **만** (도메인 타입 공유 허용)
 - `features/<A>/*` → `features/<B>` (barrel) — 필요 시 허용
-- 모든 레이어 → `shared/*`, `@/lib/store`
+- 모든 레이어 → `shared/*` (유틸·훅·`shared/ui` 디자인 시스템), `@/lib/store`
 
 ### 금지 (ESLint `no-restricted-imports`로 차단)
 
@@ -160,3 +162,5 @@ features/<name>/
 - [ ] 새 UI는 `features/<A>/ui/` 외부에서 imports 되지 않음 (barrel만 노출)
 - [ ] 서버 persistence를 건드렸다면 `lib/server/storage.ts`만 통과 (라우트가 fs/path를 직접 부르지 않음)
 - [ ] 새 API 라우트는 `app/api/projects/...` 패턴 + `features/projects/service/api.ts`에 클라이언트 래퍼 추가
+- [ ] **새 UI는 `@/shared/ui` 프리미티브를 먼저 조합** — 날것의 Tailwind 버튼/모달 재발명 금지. 재사용 가치 있으면 프리미티브의 variant로 승격 (CLAUDE.md §8)
+- [ ] **토큰에 없는 색/반경/그림자 사용 금지** — 필요하면 `app/globals.css::@theme`에 먼저 추가
