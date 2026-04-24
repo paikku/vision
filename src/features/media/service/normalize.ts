@@ -10,7 +10,8 @@ export type NormalizeVideoResult = {
  * - `decoding`: server has received the upload and is transcoding. No progress
  *   number unless the backend supports it (see BACKEND_REQUIREMENTS.md).
  * - `downloading`: server is streaming the normalized MP4 back to the client.
- * - `local`: ffmpeg.wasm fallback running in the browser; indeterminate.
+ * - `local`: ffmpeg.wasm fallback running in the browser. Progress is emitted
+ *   by ffmpeg.wasm when available; otherwise indeterminate.
  */
 export type NormalizePhase =
   | "uploading"
@@ -36,15 +37,31 @@ export type VideoNormalizeAdapter = {
   normalize: (file: File, opts?: NormalizeOptions) => Promise<File | null>;
 };
 
+type FfmpegLogEvent = { type?: string; message: string };
+type FfmpegProgressEvent = { progress: number; time?: number };
 type FfmpegInstance = {
   writeFile: (path: string, data: Uint8Array) => Promise<void>;
-  exec: (args: string[]) => Promise<void>;
+  exec: (args: string[]) => Promise<number | void>;
   readFile: (path: string) => Promise<Uint8Array | ArrayBuffer>;
-  load: (config: { coreURL: string; wasmURL: string }) => Promise<void>;
+  load: (config: {
+    classWorkerURL?: string;
+    coreURL?: string;
+    wasmURL?: string;
+    workerURL?: string;
+  }) => Promise<boolean | void>;
+  terminate?: () => void;
+  on?: (event: "progress", cb: (e: FfmpegProgressEvent) => void) => void;
+  off?: (event: "progress", cb: (e: FfmpegProgressEvent) => void) => void;
+} & {
+  on?: (event: "log", cb: (e: FfmpegLogEvent) => void) => void;
+  off?: (event: "log", cb: (e: FfmpegLogEvent) => void) => void;
 };
 
 type FfmpegModule = { FFmpeg: new () => FfmpegInstance };
-type FfmpegUtilModule = { fetchFile: (file: File) => Promise<Uint8Array> };
+type FfmpegUtilModule = {
+  fetchFile: (file: File | string) => Promise<Uint8Array>;
+  toBlobURL: (url: string, mimeType: string) => Promise<string>;
+};
 
 class ServerNormalizeAdapter implements VideoNormalizeAdapter {
   name = "server" as const;
@@ -270,76 +287,193 @@ class ServerNormalizeAdapter implements VideoNormalizeAdapter {
   }
 }
 
+/**
+ * ffmpeg.wasm fallback. Runs a single-threaded ffmpeg build in a Web Worker.
+ *
+ * Key design points (all were sources of real-world failures):
+ *
+ * 1. We fetch `@ffmpeg/ffmpeg` + `@ffmpeg/util` + `@ffmpeg/core` straight from
+ *    jsDelivr via a dynamic `import()` that hides from the Next.js bundler's
+ *    static analysis. There is no npm install required.
+ *
+ * 2. `@ffmpeg/util.toBlobURL()` is used to pre-download `ffmpeg-core.js` and
+ *    `ffmpeg-core.wasm` and expose them as same-origin `blob:` URLs. The
+ *    ffmpeg worker fetches these via `importScripts` / dynamic `import()`,
+ *    which historically hit CORS/MIME issues when left as cross-origin CDN
+ *    URLs. Serving them as blobs sidesteps that entirely.
+ *
+ * 3. We register `ffmpeg.on("progress")` / `ffmpeg.on("log")` so the UI gets
+ *    real progress (0..1) and the console gets a diagnostic trail when
+ *    ffmpeg reports errors. Previously this phase was indeterminate forever.
+ *
+ * 4. Errors from `ensureLoaded` / `exec` / `readFile` are rethrown so the
+ *    outer `normalizeVideoFile` can report them via `console.warn` instead
+ *    of silently swallowing and returning the original (broken) file.
+ *
+ * 5. `AbortSignal` terminates the ffmpeg worker mid-exec.
+ *
+ * 6. The module instance is cached across calls (`ensureLoaded` is
+ *    idempotent). A failed load clears the cache so a retry can re-attempt.
+ */
 class FfmpegWasmNormalizeAdapter implements VideoNormalizeAdapter {
   name = "ffmpeg-wasm" as const;
   private ffmpeg: FfmpegInstance | null = null;
-  private fetchFile: ((file: File) => Promise<Uint8Array>) | null = null;
+  private fetchFile: FfmpegUtilModule["fetchFile"] | null = null;
+  private loadPromise: Promise<void> | null = null;
 
   async normalize(
     file: File,
     opts?: NormalizeOptions,
   ): Promise<File | null> {
-    opts?.onProgress?.({ phase: "local", via: "ffmpeg-wasm" });
+    const emit = (phase: NormalizePhase, progress?: number) =>
+      opts?.onProgress?.({ phase, progress, via: "ffmpeg-wasm" });
+    emit("local");
+
     await this.ensureLoaded();
     if (!this.ffmpeg || !this.fetchFile) return null;
+    if (opts?.signal?.aborted) return null;
 
-    const inputName = "input";
+    const ff = this.ffmpeg;
+    const extMatch = file.name.match(/\.[^./\\]+$/);
+    const inputExt = extMatch ? extMatch[0].toLowerCase() : "";
+    const inputName = `input${inputExt || ".bin"}`;
     const outputName = "output.mp4";
 
-    await this.ffmpeg.writeFile(inputName, await this.fetchFile(file));
-    await this.ffmpeg.exec([
-      "-i",
-      inputName,
-      "-c:v",
-      "libx264",
-      "-profile:v",
-      "main",
-      "-pix_fmt",
-      "yuv420p",
-      "-movflags",
-      "+faststart",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "128k",
-      "-y",
-      outputName,
+    const onProgress = ({ progress }: FfmpegProgressEvent) => {
+      if (typeof progress !== "number" || !Number.isFinite(progress)) return;
+      emit("local", Math.max(0, Math.min(1, progress)));
+    };
+    const onLog = ({ message }: FfmpegLogEvent) => {
+      if (/\b(error|failed|invalid|unable|unsupported|no such)\b/i.test(message)) {
+        console.warn("[ffmpeg-wasm]", message);
+      }
+    };
+    const onAbort = () => {
+      try {
+        ff.terminate?.();
+      } catch {
+        // terminate may no-op once done
+      }
+      // Reset instance so the next attempt recreates the worker.
+      this.ffmpeg = null;
+      this.fetchFile = null;
+      this.loadPromise = null;
+    };
+
+    ff.on?.("progress", onProgress);
+    ff.on?.("log", onLog);
+    opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      const bytes = await this.fetchFile(file);
+      await ff.writeFile(inputName, bytes);
+
+      const exitCode = await ff.exec([
+        "-i",
+        inputName,
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "main",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-y",
+        outputName,
+      ]);
+
+      if (typeof exitCode === "number" && exitCode !== 0) {
+        throw new Error(`ffmpeg exited with code ${exitCode}`);
+      }
+
+      const data = await ff.readFile(outputName);
+      const out =
+        data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
+      // Detach from ffmpeg's internal buffer so File keeps its own memory.
+      const copied = new Uint8Array(out.byteLength);
+      copied.set(out);
+
+      return new File([copied], file.name.replace(/\.[^.]+$/, ".mp4"), {
+        type: "video/mp4",
+        lastModified: Date.now(),
+      });
+    } finally {
+      ff.off?.("progress", onProgress);
+      ff.off?.("log", onLog);
+      opts?.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  private ensureLoaded(): Promise<void> {
+    if (this.ffmpeg && this.fetchFile) return Promise.resolve();
+    if (this.loadPromise) return this.loadPromise;
+
+    this.loadPromise = this.loadImpl().catch((err) => {
+      // Let future calls retry with a fresh attempt.
+      this.loadPromise = null;
+      this.ffmpeg = null;
+      this.fetchFile = null;
+      throw err;
+    });
+    return this.loadPromise;
+  }
+
+  private async loadImpl() {
+    const FFMPEG_VERSION = "0.12.15";
+    const UTIL_VERSION = "0.12.2";
+    const CORE_VERSION = "0.12.10";
+
+    const ffmpegEsm = `https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${FFMPEG_VERSION}/dist/esm`;
+    const utilEsm = `https://cdn.jsdelivr.net/npm/@ffmpeg/util@${UTIL_VERSION}/dist/esm/index.js`;
+    const coreUmd = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${CORE_VERSION}/dist/umd`;
+
+    const [ffmpegMod, utilMod] = await Promise.all([
+      importFromUrl(`${ffmpegEsm}/index.js`) as Promise<FfmpegModule>,
+      importFromUrl(utilEsm) as Promise<FfmpegUtilModule>,
     ]);
 
-    const data = await this.ffmpeg.readFile(outputName);
-    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
+    const { FFmpeg } = ffmpegMod;
+    const { toBlobURL, fetchFile } = utilMod;
 
-    const copied = new Uint8Array(bytes.byteLength);
-    copied.set(bytes);
+    // Re-host the core on a same-origin blob URL. The worker (spawned by the
+    // FFmpeg class) then loads the core via importScripts/import() without
+    // tripping over CDN CORS quirks. The worker itself stays on the CDN —
+    // it's a module worker with relative internal imports that only resolve
+    // correctly when kept at its original URL.
+    const [coreURL, wasmURL] = await Promise.all([
+      toBlobURL(`${coreUmd}/ffmpeg-core.js`, "text/javascript"),
+      toBlobURL(`${coreUmd}/ffmpeg-core.wasm`, "application/wasm"),
+    ]);
 
-    return new File([copied], file.name.replace(/\.[^.]+$/, ".mp4"), {
-      type: "video/mp4",
-      lastModified: Date.now(),
+    const ffmpeg = new FFmpeg();
+    ffmpeg.on?.("log", ({ message }) => {
+      // Load-time logs are rare; surface them so "load failed" isn't a mystery.
+      if (/\b(error|failed|invalid|abort)\b/i.test(message)) {
+        console.warn("[ffmpeg-wasm:load]", message);
+      }
     });
-  }
 
-  private async ensureLoaded() {
-    if (this.ffmpeg && this.fetchFile) return;
-
-    const importFromUrl = (url: string) =>
-      Function("u", "return import(u)")(url) as Promise<unknown>;
-
-    const ffmpegMod = (await importFromUrl(
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js",
-    )) as FfmpegModule;
-    const utilMod = (await importFromUrl(
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js",
-    )) as FfmpegUtilModule;
-
-    const ffmpeg = new ffmpegMod.FFmpeg();
-    await ffmpeg.load({
-      coreURL: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
-      wasmURL: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
-    });
+    const ok = await ffmpeg.load({ coreURL, wasmURL });
+    if (ok === false) {
+      throw new Error("ffmpeg.load() returned false");
+    }
 
     this.ffmpeg = ffmpeg;
-    this.fetchFile = utilMod.fetchFile;
+    this.fetchFile = fetchFile;
   }
+}
+
+/**
+ * Dynamic cross-origin import that the Next.js bundler won't try to resolve
+ * at build time. Exported for testing.
+ */
+export function importFromUrl(url: string): Promise<unknown> {
+  return Function("u", "return import(u)")(url) as Promise<unknown>;
 }
 
 export async function normalizeVideoFile(
@@ -359,10 +493,22 @@ export async function normalizeVideoFile(
         file: normalized,
         via: adapter.name,
       };
-    } catch {
-      // try next adapter
+    } catch (err) {
+      // Don't swallow silently — without this trail, a broken ffmpeg.wasm
+      // fallback looks identical to "server adapter returned null" and the
+      // user ends up with `via: "original"` for no obvious reason.
+      console.warn(`[normalize:${adapter.name}] failed:`, err);
     }
   }
 
   return { file, via: "original" };
 }
+
+/**
+ * Test-only seam: exposes the adapters so unit tests can exercise the
+ * ffmpeg.wasm fallback with a stubbed FFmpeg class.
+ */
+export const __internals = {
+  ServerNormalizeAdapter,
+  FfmpegWasmNormalizeAdapter,
+};
