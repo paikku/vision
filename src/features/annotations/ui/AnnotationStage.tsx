@@ -10,6 +10,12 @@ import {
 import { useStore } from "@/lib/store";
 import { useStageTransform } from "@/shared/hooks/useStageTransform";
 import { useDrawingTool } from "../hooks/useDrawingTool";
+import {
+  polygonPath,
+  shapeAabb,
+  shapeContains,
+  translateShape,
+} from "../shape-utils";
 import { TOOLS } from "../tools/registry";
 import type { LabelClass, Shape } from "../types";
 
@@ -96,26 +102,27 @@ export function AnnotationStage() {
         lastClientY: number;
       }
     | {
-        mode: "move" | "resize";
+        mode: "move";
         annotationId: string;
         startClientX: number;
         startClientY: number;
         hasMoved: boolean;
-        startShape: { x: number; y: number; w: number; h: number };
+        startShape: Shape;
+      }
+    | {
+        mode: "resize";
+        annotationId: string;
+        startClientX: number;
+        startClientY: number;
+        hasMoved: boolean;
+        startShape: { kind: "rect"; x: number; y: number; w: number; h: number };
       }
   >(null);
 
   const DRAG_ACTIVATE_DISTANCE_PX = 2;
 
-  // Move: only clamp position, never touch size.
-  const clampMove = useCallback((x: number, y: number, w: number, h: number) => ({
-    x: Math.max(0, Math.min(1 - w, x)),
-    y: Math.max(0, Math.min(1 - h, y)),
-    w,
-    h,
-  }), []);
-
-  // Resize: enforce minimum size, keep top-left fixed.
+  // Resize: enforce minimum size, keep top-left fixed. Rect only — polygon
+  // resize would need per-vertex handles and is out of scope for this pass.
   const clampResize = useCallback((x: number, y: number, w: number, h: number) => {
     const minSize = 0.0005;
     const nextW = Math.max(minSize, Math.min(1 - x, w));
@@ -164,7 +171,7 @@ export function AnnotationStage() {
     }
 
     const active = frameAnnotations.find((a) => a.id === drag.annotationId);
-    if (!active || active.shape.kind !== "rect" || !fitState) return;
+    if (!active || !fitState) return;
     const rawDx = e.clientX - drag.startClientX;
     const rawDy = e.clientY - drag.startClientY;
     if (!drag.hasMoved) {
@@ -173,11 +180,15 @@ export function AnnotationStage() {
     }
     const dx = rawDx / (fitState.width * zoom);
     const dy = rawDy / (fitState.height * zoom);
+    if (drag.mode === "move") {
+      updateAnnotation(active.id, {
+        shape: translateShape(drag.startShape, dx, dy),
+      });
+      return;
+    }
+    // resize — rect only
     const start = drag.startShape;
-    const next =
-      drag.mode === "move"
-        ? clampMove(start.x + dx, start.y + dy, start.w, start.h)
-        : clampResize(start.x, start.y, start.w + dx, start.h + dy);
+    const next = clampResize(start.x, start.y, start.w + dx, start.h + dy);
     updateAnnotation(active.id, { shape: { kind: "rect", ...next } });
   };
 
@@ -250,17 +261,15 @@ export function AnnotationStage() {
               const b = stageRef.current.getBoundingClientRect();
               const mx = (e.clientX - b.left) / b.width;
               const my = (e.clientY - b.top) / b.height;
-              const hits = frameAnnotations.filter((a) => {
-                if (a.shape.kind !== "rect") return false;
-                const { x, y, w, h } = a.shape;
-                return mx >= x && mx <= x + w && my >= y && my <= y + h;
-              });
+              const hits = frameAnnotations.filter((a) =>
+                shapeContains(a.shape, mx, my),
+              );
               if (hits.length === 0) { setHoveredAnnotation(null); return; }
               const closest = hits.reduce((best, cur) => {
-                const bs = best.shape as { x: number; y: number; w: number; h: number };
-                const cs = cur.shape as { x: number; y: number; w: number; h: number };
-                const bd = Math.hypot(mx - (bs.x + bs.w / 2), my - (bs.y + bs.h / 2));
-                const cd = Math.hypot(mx - (cs.x + cs.w / 2), my - (cs.y + cs.h / 2));
+                const bb = shapeAabb(best.shape);
+                const cb = shapeAabb(cur.shape);
+                const bd = Math.hypot(mx - (bb.x + bb.w / 2), my - (bb.y + bb.h / 2));
+                const cd = Math.hypot(mx - (cb.x + cb.w / 2), my - (cb.y + cb.h / 2));
                 return cd < bd ? cur : best;
               });
               setHoveredAnnotation(closest.id);
@@ -284,7 +293,6 @@ export function AnnotationStage() {
                   } : undefined}
                   showHandle={isEditMode && a.id === selectedAnnotationId}
                   onStartMove={isEditMode ? (e) => {
-                    if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
                     selectAnnotation(a.id);
@@ -298,7 +306,7 @@ export function AnnotationStage() {
                     };
                     stageRef.current?.setPointerCapture(e.pointerId);
                   } : undefined}
-                  onStartResize={isEditMode ? (e) => {
+                  onStartResize={isEditMode && a.shape.kind === "rect" ? (e) => {
                     if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
@@ -329,21 +337,20 @@ export function AnnotationStage() {
             )}
           </svg>
 
-          {/* Rect label overlays — outside box, top-right corner, no background.
+          {/* Label overlays — outside AABB, top-right corner, no background.
               transform: scale(1/zoom) counteracts the parent stageRef scale so the
               label stays at a fixed pixel size regardless of zoom level. */}
           {showRectLabels && frameAnnotations.map((a) => {
-            if (a.shape.kind !== "rect") return null;
             const klass = classes.find((c) => c.id === a.classId);
             if (!klass) return null;
-            const s = a.shape;
+            const b = shapeAabb(a.shape);
             return (
               <div
                 key={a.id}
                 className="pointer-events-none absolute select-none leading-none whitespace-nowrap"
                 style={{
-                  left: `${(s.x + s.w) * 100}%`,
-                  top: `${s.y * 100}%`,
+                  left: `${(b.x + b.w) * 100}%`,
+                  top: `${b.y * 100}%`,
                   transform: `scale(${1 / zoom})`,
                   transformOrigin: "0 0",
                   fontSize: "11px",
@@ -473,10 +480,49 @@ function ShapeView({
   showHandle?: boolean;
   zoom: number;
 }) {
+  const visualZoom = Math.max(0.25, zoom);
+  const fillOpacity = hovered || selected ? "3a" : "22";
+  const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
+
+  if (shape.kind === "polygon") {
+    const d = polygonPath(shape.rings);
+    if (!d) return null;
+    return (
+      <g
+        data-annotation-interactive="true"
+        onPointerDown={onStartMove ?? onSelect}
+        onPointerEnter={onPointerEnter}
+        onPointerLeave={onPointerLeave}
+        style={{ cursor: onStartMove ? "move" : undefined }}
+      >
+        <path
+          d={d}
+          fill={`${klass.color}${fillOpacity}`}
+          fillRule="evenodd"
+          stroke={klass.color}
+          strokeWidth={strokeWidth}
+          strokeLinejoin="round"
+          strokeDasharray={draft ? "5 4" : undefined}
+          vectorEffect="non-scaling-stroke"
+          style={{ cursor: onStartMove ? "move" : onSelect ? "pointer" : undefined }}
+        />
+        {hovered && !selected && !draft && (
+          <path
+            d={d}
+            fill="none"
+            fillRule="evenodd"
+            stroke={klass.color}
+            strokeWidth={4 / visualZoom}
+            strokeOpacity={0.25}
+            vectorEffect="non-scaling-stroke"
+            style={{ pointerEvents: "none" }}
+          />
+        )}
+      </g>
+    );
+  }
+
   if (shape.kind === "rect") {
-    const visualZoom = Math.max(0.25, zoom);
-    const fillOpacity = hovered || selected ? "3a" : "22";
-    const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
     // Hit area: ~20 screen-pixels regardless of zoom, capped to 45% of shape.
     // 0.025/zoom converts to a constant visual pixel size (assuming ~800px stage).
     const hitNorm = Math.min(0.06, 0.055 / zoom);

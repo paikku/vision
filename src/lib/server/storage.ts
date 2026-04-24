@@ -98,7 +98,11 @@ export type StoredRectShape = {
   w: number;
   h: number;
 };
-export type StoredShape = StoredRectShape;
+export type StoredPolygonShape = {
+  kind: "polygon";
+  rings: { x: number; y: number }[][];
+};
+export type StoredShape = StoredRectShape | StoredPolygonShape;
 
 export type StoredAnnotation = {
   id: string;
