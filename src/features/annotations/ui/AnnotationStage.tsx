@@ -521,16 +521,20 @@ function ShapeView({
           />
         )}
         {/* Draft-only: dot the committed vertices so users see the path
-            they've built; highlight the first vertex once closable. */}
+            they've built; highlight the first vertex once closable.
+            NOTE: r is in SVG user-space (viewBox 0..1). Keeping it ≪1
+            and dividing by zoom renders a ~4-8px visual dot at any
+            zoom level. Do NOT use pixel-sized numbers here — r=3 in
+            this viewBox covers the entire frame. */}
         {draft && shape.rings[0]?.map((p, i) => (
           <circle
             key={i}
             cx={p.x}
             cy={p.y}
-            r={(i === 0 && canClose ? 6 : 3) / visualZoom}
+            r={(i === 0 && canClose ? 0.008 : 0.004) / visualZoom}
             fill={i === 0 && canClose ? klass.color : "white"}
             stroke={klass.color}
-            strokeWidth={1.5 / visualZoom}
+            strokeWidth={1.5}
             vectorEffect="non-scaling-stroke"
             style={{ pointerEvents: "none" }}
           />
