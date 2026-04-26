@@ -107,25 +107,15 @@ export type SegmentResult = {
 export type SegmentOptions = {
   signal?: AbortSignal;
   /**
-   * Per-attempt timeout in ms. The request is aborted (and possibly
-   * retried — see `retries`) if the server does not respond in time.
-   * Defaults to {@link DEFAULT_SEGMENT_TIMEOUT_MS}.
+   * Per-request timeout in ms. Bounds a single segment call so a stuck
+   * backend does not pin the UI in a "loading" state forever. Defaults
+   * to {@link DEFAULT_SEGMENT_TIMEOUT_MS}.
    */
   timeoutMs?: number;
-  /**
-   * Maximum number of retry attempts after the initial request, applied
-   * only to transient failures (timeout, network error, 502/503/504).
-   * Defaults to {@link DEFAULT_SEGMENT_RETRIES}. Each retry waits with
-   * exponential backoff capped at 4s.
-   */
-  retries?: number;
 };
 
-/** Default per-attempt timeout for `segmentRegion`. */
+/** Default per-request timeout for `segmentRegion`. */
 export const DEFAULT_SEGMENT_TIMEOUT_MS = 30_000;
-
-/** Default number of retry attempts after the initial request. */
-export const DEFAULT_SEGMENT_RETRIES = 2;
 
 /**
  * Minimum interval (ms) between repeated segment requests on the same
@@ -254,13 +244,16 @@ export async function fetchSegmentModels(
  * callers are expected to surface that as a no-op (the annotation stays
  * untouched) rather than a hard error.
  *
- * Stability:
- *   - Each attempt is bounded by `timeoutMs` (default
- *     {@link DEFAULT_SEGMENT_TIMEOUT_MS}) so a stuck backend does not pin
- *     the UI in a "loading" state forever.
- *   - Transient failures (timeout, network error, 502/503/504) are retried
- *     up to `retries` times (default {@link DEFAULT_SEGMENT_RETRIES}) with
- *     exponential backoff. Caller-initiated aborts skip retries.
+ * Single attempt by design: failures (timeout, network error, 4xx, 5xx)
+ * resolve to `null` immediately. The server already protects itself with
+ * a bounded queue and per-slot timeout (see videonizer §부하 제어), so
+ * retrying from the client just amplifies pressure on an already
+ * overloaded backend. The user can press `H` again if they want another
+ * try; the throttle in `LabelPanel` paces those manual retries.
+ *
+ * The single attempt is still bounded by `timeoutMs` (default
+ * {@link DEFAULT_SEGMENT_TIMEOUT_MS}) so the loading overlay never gets
+ * stuck on a non-responsive backend.
  */
 export async function segmentRegion(
   frameImageUrl: string,
@@ -269,74 +262,30 @@ export async function segmentRegion(
 ): Promise<SegmentResult | null> {
   const endpoint = getSegmentEndpoint();
   if (!endpoint) return null;
+  if (opts?.signal?.aborted) return null;
 
-  const imageBlob = await fetchImageBlob(frameImageUrl, opts?.signal);
-  if (!imageBlob) return null;
-
-  const timeoutMs = opts?.timeoutMs ?? DEFAULT_SEGMENT_TIMEOUT_MS;
-  const maxRetries = Math.max(0, opts?.retries ?? DEFAULT_SEGMENT_RETRIES);
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (opts?.signal?.aborted) return null;
-
-    const form = new FormData();
-    form.append("file", imageBlob, "frame.jpg");
-    form.append("region", JSON.stringify(hint.bbox));
-    form.append("model", hint.model ?? DEFAULT_SEGMENT_MODEL);
-    if (hint.classHint) form.append("classHint", hint.classHint);
-
-    const outcome = await postSegmentOnce(endpoint, form, opts?.signal, timeoutMs);
-
-    if (outcome.kind === "ok") {
-      return parseServerResponse(outcome.data, hint.bbox);
-    }
-    if (outcome.kind === "aborted" || !outcome.transient) {
-      return null;
-    }
-    if (attempt >= maxRetries) return null;
-
-    // Exponential backoff: 250ms, 500ms, 1s, ... capped at 4s.
-    const delay = Math.min(4000, 250 * 2 ** attempt);
-    if (!(await sleepInterruptible(delay, opts?.signal))) return null;
-  }
-  return null;
-}
-
-async function fetchImageBlob(
-  url: string,
-  signal: AbortSignal | undefined,
-): Promise<Blob | null> {
+  let imageBlob: Blob;
   try {
-    const resp = await fetch(url, { signal });
+    const resp = await fetch(frameImageUrl, { signal: opts?.signal });
     if (!resp.ok) return null;
-    return await resp.blob();
+    imageBlob = await resp.blob();
   } catch {
     return null;
   }
-}
 
-type PostOutcome =
-  | { kind: "ok"; data: ServerResponse }
-  | { kind: "aborted" }
-  | { kind: "error"; transient: boolean };
+  const form = new FormData();
+  form.append("file", imageBlob, "frame.jpg");
+  form.append("region", JSON.stringify(hint.bbox));
+  form.append("model", hint.model ?? DEFAULT_SEGMENT_MODEL);
+  if (hint.classHint) form.append("classHint", hint.classHint);
 
-async function postSegmentOnce(
-  endpoint: string,
-  form: FormData,
-  externalSignal: AbortSignal | undefined,
-  timeoutMs: number,
-): Promise<PostOutcome> {
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_SEGMENT_TIMEOUT_MS;
   const ctl = new AbortController();
   const onExternalAbort = () => ctl.abort();
-  if (externalSignal) {
-    if (externalSignal.aborted) return { kind: "aborted" };
-    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  if (opts?.signal) {
+    opts.signal.addEventListener("abort", onExternalAbort, { once: true });
   }
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    ctl.abort();
-  }, timeoutMs);
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
 
   try {
     let resp: Response;
@@ -347,53 +296,22 @@ async function postSegmentOnce(
         signal: ctl.signal,
       });
     } catch {
-      if (externalSignal?.aborted) return { kind: "aborted" };
-      // Timeouts and network errors are both treated as transient so the
-      // caller's retry loop can give the backend a second chance. The
-      // `timedOut` flag is preserved for future logging hooks.
-      void timedOut;
-      return { kind: "error", transient: true };
+      // Timeout, abort, or network error — give up. Caller renders a no-op.
+      return null;
     }
+    if (!resp.ok) return null;
 
-    if (!resp.ok) {
-      const transient = isTransientHttpStatus(resp.status);
-      return { kind: "error", transient };
-    }
-
+    let data: ServerResponse;
     try {
-      const data = (await resp.json()) as ServerResponse;
-      return { kind: "ok", data };
+      data = (await resp.json()) as ServerResponse;
     } catch {
-      return { kind: "error", transient: false };
+      return null;
     }
+    return parseServerResponse(data, hint.bbox);
   } finally {
     clearTimeout(timer);
-    if (externalSignal) {
-      externalSignal.removeEventListener("abort", onExternalAbort);
-    }
+    opts?.signal?.removeEventListener("abort", onExternalAbort);
   }
-}
-
-function isTransientHttpStatus(status: number): boolean {
-  return status === 408 || status === 425 || status === 429 || status >= 500;
-}
-
-function sleepInterruptible(
-  ms: number,
-  signal: AbortSignal | undefined,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) return resolve(false);
-    const t = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve(true);
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      resolve(false);
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 function parseServerResponse(
