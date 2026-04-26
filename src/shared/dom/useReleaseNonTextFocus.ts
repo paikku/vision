@@ -15,8 +15,12 @@ import { isTextInputElement } from "./isEditableElement";
  * interaction has settled.
  *
  * Triggers (all attached to `rootRef.current` in the capture phase):
- *   - `pointerup`  — covers any mouse/pen/touch interaction end, including
- *     `<select>` dropdown close.
+ *   - `pointerup`  — covers any mouse/pen/touch interaction end. Skipped when
+ *     the target is inside a `<select>` because the dropdown stays open only
+ *     while the select keeps focus; blurring here would close it before the
+ *     user can pick an option. The `change` listener still fires once a value
+ *     is chosen, and an outside-click pointerup releases focus if the user
+ *     cancels.
  *   - `change`     — covers select/checkbox/radio/color/range value changes
  *     (also fires for keyboard-driven changes that produce no pointerup).
  *   - `keyup`      — Enter/Space activations on focused buttons.
@@ -39,7 +43,7 @@ export function useReleaseNonTextFocus(rootRef: RefObject<HTMLElement | null>) {
     const root = rootRef.current;
     if (!root) return;
 
-    const release = () => {
+    const scheduleBlur = () => {
       requestAnimationFrame(() => {
         const active = document.activeElement;
         if (!(active instanceof HTMLElement)) return;
@@ -51,13 +55,23 @@ export function useReleaseNonTextFocus(rootRef: RefObject<HTMLElement | null>) {
       });
     };
 
-    root.addEventListener("pointerup", release, true);
-    root.addEventListener("change", release, true);
-    root.addEventListener("keyup", release, true);
+    const onPointerUp = (e: PointerEvent) => {
+      // Native <select>: pointerup fires while the dropdown is still open
+      // because the select retains focus until the user picks (or cancels).
+      // Skip — the `change` handler covers the pick, and if the user cancels
+      // by clicking elsewhere, that outside pointerup will release focus.
+      const target = e.target;
+      if (target instanceof Element && target.closest("select")) return;
+      scheduleBlur();
+    };
+
+    root.addEventListener("pointerup", onPointerUp, true);
+    root.addEventListener("change", scheduleBlur, true);
+    root.addEventListener("keyup", scheduleBlur, true);
     return () => {
-      root.removeEventListener("pointerup", release, true);
-      root.removeEventListener("change", release, true);
-      root.removeEventListener("keyup", release, true);
+      root.removeEventListener("pointerup", onPointerUp, true);
+      root.removeEventListener("change", scheduleBlur, true);
+      root.removeEventListener("keyup", scheduleBlur, true);
     };
   }, [rootRef]);
 }
