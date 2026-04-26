@@ -2,11 +2,23 @@
 
 import { useEffect, useRef } from "react";
 import { selectVisibleFrames, useStore } from "@/lib/store";
-import { isEditableElement } from "@/shared/dom/isEditableElement";
 import { TOOL_LIST } from "../tools/registry";
 import type { ClassShortcutKey, ToolId } from "../types";
 
 const CLASS_KEYS = new Set<string>(["q", "w", "e", "r"]);
+
+function isEditable(target: EventTarget | null) {
+  if (!target) return false;
+  const el = target as HTMLElement;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName.toLowerCase();
+  if (tag === "textarea") return true;
+  if (tag === "input") {
+    const type = (el as HTMLInputElement).type.toLowerCase();
+    return !["checkbox", "radio", "button", "submit", "reset", "file", "color", "range"].includes(type);
+  }
+  return false;
+}
 
 /**
  * Global keyboard shortcuts for the annotation workspace.
@@ -40,7 +52,7 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (isEditableElement(e.target)) return;
+      if (isEditable(e.target)) return;
       const key = e.key.toLowerCase();
 
       // 1. Delete selected annotation (D key)

@@ -12,7 +12,6 @@ import {
   videoSourceUrl,
 } from "@/features/projects/service/api";
 import { useStore } from "@/lib/store";
-import { isEditableElement } from "@/shared/dom/isEditableElement";
 import { MainMediaPanel } from "./MainMediaPanel";
 import { ProjectTopBar } from "./ProjectTopBar";
 import { useProjectSync } from "./useProjectSync";
@@ -28,7 +27,6 @@ export function ProjectWorkspace({
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resetRef = useRef(useStore.getState().reset);
-  const workspaceRef = useRef<HTMLDivElement | null>(null);
 
   useKeyboardShortcuts();
 
@@ -135,26 +133,20 @@ export function ProjectWorkspace({
   useProjectSync({ projectId, videoId, initialized });
 
   useEffect(() => {
-    const root = workspaceRef.current;
-    if (!root) return;
-
-    const clearFocusOnPointerDown = (e: PointerEvent) => {
-      const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
-      if (!root.contains(target)) return;
-      if (isEditableElement(target)) return;
-
-      const active = document.activeElement as HTMLElement | null;
-      if (!active || active === document.body) return;
-      if (!root.contains(active)) return;
-      if (active.contains(target)) return;
-
-      requestAnimationFrame(() => active.blur());
+    const handler = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      if (tag === "button") {
+        requestAnimationFrame(() => el.blur());
+      } else if (tag === "input") {
+        const type = (el as HTMLInputElement).type.toLowerCase();
+        if (["checkbox", "radio"].includes(type)) {
+          requestAnimationFrame(() => el.blur());
+        }
+      }
     };
-
-    root.addEventListener("pointerdown", clearFocusOnPointerDown, true);
-    return () =>
-      root.removeEventListener("pointerdown", clearFocusOnPointerDown, true);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
   }, []);
 
   if (error) {
@@ -175,7 +167,7 @@ export function ProjectWorkspace({
   }
 
   return (
-    <div ref={workspaceRef} className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden">
       <ProjectTopBar projectId={projectId} />
       {media ? (
         <div className="flex min-h-0 flex-1">
