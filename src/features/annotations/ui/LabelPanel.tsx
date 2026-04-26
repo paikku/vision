@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { isEditableElement } from "@/shared/dom/isEditableElement";
 import {
   SEGMENT_MODELS,
   isSegmentModelId,
@@ -15,19 +16,6 @@ import type { ClassShortcutKey } from "../types";
 const CLASS_SHORTCUT_KEYS: ClassShortcutKey[] = ["q", "w", "e", "r"];
 const REMOVE_KEYS = new Set(["d"]);
 const SEGMENT_KEY = "h";
-
-function isEditableTarget(target: EventTarget | null) {
-  if (!target) return false;
-  const el = target as HTMLElement;
-  if (el.isContentEditable) return true;
-  const tag = el.tagName.toLowerCase();
-  if (tag === "textarea" || tag === "select") return true;
-  if (tag === "input") {
-    const type = (el as HTMLInputElement).type.toLowerCase();
-    return !["checkbox", "radio", "button", "submit", "reset", "file", "color", "range"].includes(type);
-  }
-  return false;
-}
 
 export function LabelPanel() {
   const classes = useStore((s) => s.classes);
@@ -153,7 +141,7 @@ export function LabelPanel() {
   // stopImmediatePropagation prevents the bubble-phase useKeyboardShortcuts handler from also firing.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target)) return;
+      if (isEditableElement(e.target)) return;
       const key = e.key.toLowerCase();
 
       // Priority 1: hovering a class row + Q/W/E/R → assign shortcut + activate class

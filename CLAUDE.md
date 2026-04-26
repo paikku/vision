@@ -161,7 +161,13 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 | `C` | draw ↔ edit 모드 토글 |
 | `Escape` | 진행 중인 draft 취소 |
 
-**포커스 버그 방지**: `isEditable()` 함수는 checkbox/radio를 텍스트 입력으로 취급하지 않도록 구현. `Workspace`의 전역 click 핸들러가 버튼/체크박스 클릭 후 자동 blur하여 단축키가 항상 작동.
+**포커스 버그 방지** (`src/shared/dom/`):
+
+- `isEditableElement` — 단축키 핸들러용 broad predicate. 지금 타이핑 중인지 판단(텍스트 input, textarea, select, contenteditable 모두 true).
+- `isTextInputElement` — focus 유지 가치 판단용 strict predicate. 진짜 텍스트 입력만 true(`<select>`/checkbox/radio/color/range 등은 false).
+- `useReleaseNonTextFocus(rootRef)` — shell(`Workspace`, `ProjectWorkspace`)에서 한 번 호출. root에 capture-phase로 `pointerup`/`change`/`keyup` 리스너를 달고, 인터랙션 종료 후 `requestAnimationFrame`에서 `document.activeElement`가 `isTextInputElement` 아니면 `blur()`. select 드롭다운은 정상 동작하고, 값 선택 후에만 포커스가 풀림. Tab 키 네비게이션은 트리거하지 않아 키보드 접근성 보존.
+- Opt-out: `data-keep-focus` 속성을 가진 요소(또는 그 조상)는 자동 blur 대상에서 제외. 모달 focus trap 등 의도적으로 포커스를 잡고 싶은 위젯용.
+- 새 인터랙티브 위젯(button/select/checkbox 등)을 추가할 때 별도 blur 처리를 할 필요 없음 — shell의 훅이 일괄 처리.
 
 ### 5.5 이동/리사이즈 규칙
 

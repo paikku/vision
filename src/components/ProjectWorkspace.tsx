@@ -12,7 +12,7 @@ import {
   videoSourceUrl,
 } from "@/features/projects/service/api";
 import { useStore } from "@/lib/store";
-import { isEditableElement } from "@/shared/dom/isEditableElement";
+import { useReleaseNonTextFocus } from "@/shared/dom/useReleaseNonTextFocus";
 import { MainMediaPanel } from "./MainMediaPanel";
 import { ProjectTopBar } from "./ProjectTopBar";
 import { useProjectSync } from "./useProjectSync";
@@ -134,28 +134,7 @@ export function ProjectWorkspace({
 
   useProjectSync({ projectId, videoId, initialized });
 
-  useEffect(() => {
-    const root = workspaceRef.current;
-    if (!root) return;
-
-    const clearFocusOnPointerDown = (e: PointerEvent) => {
-      const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
-      if (!root.contains(target)) return;
-      if (isEditableElement(target)) return;
-
-      const active = document.activeElement as HTMLElement | null;
-      if (!active || active === document.body) return;
-      if (!root.contains(active)) return;
-      if (active.contains(target)) return;
-
-      requestAnimationFrame(() => active.blur());
-    };
-
-    root.addEventListener("pointerdown", clearFocusOnPointerDown, true);
-    return () =>
-      root.removeEventListener("pointerdown", clearFocusOnPointerDown, true);
-  }, []);
+  useReleaseNonTextFocus(workspaceRef);
 
   if (error) {
     return (
