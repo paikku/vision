@@ -41,6 +41,18 @@ export type AnnotationsSlice = {
    * the UI has something to render before the fetch completes.
    */
   segmentModels: SegmentModelInfo[];
+  /**
+   * Annotation ids currently waiting on a segmentation response. Surfaced
+   * here (rather than as local state) so the canvas overlay and the side
+   * panel can reflect the same loading status.
+   */
+  segmentingIds: Record<string, true>;
+  /**
+   * Per-annotation timestamp of the most recent segment request. Used to
+   * enforce a minimum interval between repeated `H` presses on the same
+   * annotation (see `LabelPanel`).
+   */
+  lastSegmentRequestAt: Record<string, number>;
 
   addClass: (name?: string) => LabelClass;
   removeClass: (id: string) => void;
@@ -59,6 +71,8 @@ export type AnnotationsSlice = {
   setInteractionMode: (mode: "draw" | "edit") => void;
   setSegmentModel: (id: SegmentModelId) => void;
   setSegmentModels: (models: SegmentModelInfo[]) => void;
+  setSegmenting: (id: string, on: boolean) => void;
+  markSegmentRequested: (id: string, at: number) => void;
 };
 
 export const createAnnotationsSlice: StateCreator<
@@ -76,6 +90,8 @@ export const createAnnotationsSlice: StateCreator<
   interactionMode: "draw",
   segmentModel: DEFAULT_SEGMENT_MODEL,
   segmentModels: [...SEGMENT_MODELS],
+  segmentingIds: {},
+  lastSegmentRequestAt: {},
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -138,11 +154,27 @@ export const createAnnotationsSlice: StateCreator<
     })),
 
   removeAnnotation: (id) =>
-    set((s) => ({
-      annotations: s.annotations.filter((a) => a.id !== id),
-      selectedAnnotationId:
-        s.selectedAnnotationId === id ? null : s.selectedAnnotationId,
-    })),
+    set((s) => {
+      const segmentingIds =
+        id in s.segmentingIds
+          ? Object.fromEntries(
+              Object.entries(s.segmentingIds).filter(([k]) => k !== id),
+            )
+          : s.segmentingIds;
+      const lastSegmentRequestAt =
+        id in s.lastSegmentRequestAt
+          ? Object.fromEntries(
+              Object.entries(s.lastSegmentRequestAt).filter(([k]) => k !== id),
+            )
+          : s.lastSegmentRequestAt;
+      return {
+        annotations: s.annotations.filter((a) => a.id !== id),
+        selectedAnnotationId:
+          s.selectedAnnotationId === id ? null : s.selectedAnnotationId,
+        segmentingIds,
+        lastSegmentRequestAt,
+      };
+    }),
 
   selectAnnotation: (id) => set({ selectedAnnotationId: id }),
   setHoveredAnnotation: (id) => set({ hoveredAnnotationId: id }),
@@ -151,4 +183,22 @@ export const createAnnotationsSlice: StateCreator<
   setInteractionMode: (interactionMode) => set({ interactionMode }),
   setSegmentModel: (segmentModel) => set({ segmentModel }),
   setSegmentModels: (segmentModels) => set({ segmentModels }),
+
+  setSegmenting: (id, on) =>
+    set((s) => {
+      const has = id in s.segmentingIds;
+      if (on) {
+        if (has) return s;
+        return { segmentingIds: { ...s.segmentingIds, [id]: true } };
+      }
+      if (!has) return s;
+      const next = { ...s.segmentingIds };
+      delete next[id];
+      return { segmentingIds: next };
+    }),
+
+  markSegmentRequested: (id, at) =>
+    set((s) => ({
+      lastSegmentRequestAt: { ...s.lastSegmentRequestAt, [id]: at },
+    })),
 });

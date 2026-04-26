@@ -39,6 +39,7 @@ export function AnnotationStage() {
   const setInteractionMode = useStore((s) => s.setInteractionMode);
   const keepZoomOnFrameChange = useStore((s) => s.keepZoomOnFrameChange);
   const setKeepZoomOnFrameChange = useStore((s) => s.setKeepZoomOnFrameChange);
+  const segmentingIds = useStore((s) => s.segmentingIds);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -456,6 +457,23 @@ export function AnnotationStage() {
             });
           })()}
 
+          {/* Per-annotation segmentation loading overlay. Centered on each
+              shape's AABB while a segment request is in flight. Counter-
+              scaled so the spinner stays the same visual size at any zoom. */}
+          {frameAnnotations.map((a) => {
+            if (!segmentingIds[a.id]) return null;
+            const klass = classes.find((c) => c.id === a.classId);
+            const b = shapeAabb(a.shape);
+            return (
+              <SegmentLoadingOverlay
+                key={`seg-${a.id}`}
+                aabb={b}
+                color={klass?.color ?? "#ffffff"}
+                zoom={zoom}
+              />
+            );
+          })}
+
           {/* Label overlays — outside AABB, top-right corner, no background.
               transform: scale(1/zoom) counteracts the parent stageRef scale so the
               label stays at a fixed pixel size regardless of zoom level. */}
@@ -725,6 +743,70 @@ function Handle({
         touchAction: "none",
       }}
     />
+  );
+}
+
+/**
+ * Loading indicator shown over an annotation while its segment request is
+ * in flight. Positioned at the AABB center inside the stageRef and
+ * counter-scaled by 1/zoom so the spinner stays a fixed visual size.
+ * The spinner is rendered as an inline SVG so no extra asset file is
+ * needed and it inherits the class color for a per-label cue.
+ */
+function SegmentLoadingOverlay({
+  aabb,
+  color,
+  zoom,
+}: {
+  aabb: { x: number; y: number; w: number; h: number };
+  color: string;
+  zoom: number;
+}) {
+  const visualZoom = Math.max(0.25, zoom);
+  const cx = aabb.x + aabb.w / 2;
+  const cy = aabb.y + aabb.h / 2;
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left: `${cx * 100}%`,
+        top: `${cy * 100}%`,
+        transform: `translate(-50%, -50%) scale(${1 / visualZoom})`,
+        transformOrigin: "center",
+      }}
+    >
+      <div
+        className="flex items-center justify-center rounded-full bg-black/55 backdrop-blur-sm"
+        style={{ width: 44, height: 44, boxShadow: "0 0 0 1px rgba(255,255,255,0.18)" }}
+      >
+        <svg
+          className="animate-spin"
+          width={28}
+          height={28}
+          viewBox="0 0 50 50"
+          aria-hidden
+        >
+          <circle
+            cx={25}
+            cy={25}
+            r={20}
+            fill="none"
+            stroke="rgba(255,255,255,0.22)"
+            strokeWidth={5}
+          />
+          <circle
+            cx={25}
+            cy={25}
+            r={20}
+            fill="none"
+            stroke={color}
+            strokeWidth={5}
+            strokeLinecap="round"
+            strokeDasharray="32 96"
+          />
+        </svg>
+      </div>
+    </div>
   );
 }
 

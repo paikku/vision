@@ -106,7 +106,23 @@ export type SegmentResult = {
 
 export type SegmentOptions = {
   signal?: AbortSignal;
+  /**
+   * Per-request timeout in ms. Bounds a single segment call so a stuck
+   * backend does not pin the UI in a "loading" state forever. Defaults
+   * to {@link DEFAULT_SEGMENT_TIMEOUT_MS}.
+   */
+  timeoutMs?: number;
 };
+
+/** Default per-request timeout for `segmentRegion`. */
+export const DEFAULT_SEGMENT_TIMEOUT_MS = 30_000;
+
+/**
+ * Minimum interval (ms) between repeated segment requests on the same
+ * annotation. Used by `LabelPanel` to throttle the `H` shortcut so users
+ * who hold the key down don't flood the backend.
+ */
+export const SEGMENT_REQUEST_MIN_INTERVAL_MS = 1000;
 
 /** Raw server response shape — kept permissive so the server can evolve. */
 type ServerResponse = {
@@ -227,6 +243,17 @@ export async function fetchSegmentModels(
  * Returns `null` if segmentation is not configured or the request fails —
  * callers are expected to surface that as a no-op (the annotation stays
  * untouched) rather than a hard error.
+ *
+ * Single attempt by design: failures (timeout, network error, 4xx, 5xx)
+ * resolve to `null` immediately. The server already protects itself with
+ * a bounded queue and per-slot timeout (see videonizer §부하 제어), so
+ * retrying from the client just amplifies pressure on an already
+ * overloaded backend. The user can press `H` again if they want another
+ * try; the throttle in `LabelPanel` paces those manual retries.
+ *
+ * The single attempt is still bounded by `timeoutMs` (default
+ * {@link DEFAULT_SEGMENT_TIMEOUT_MS}) so the loading overlay never gets
+ * stuck on a non-responsive backend.
  */
 export async function segmentRegion(
   frameImageUrl: string,
@@ -235,12 +262,13 @@ export async function segmentRegion(
 ): Promise<SegmentResult | null> {
   const endpoint = getSegmentEndpoint();
   if (!endpoint) return null;
+  if (opts?.signal?.aborted) return null;
 
   let imageBlob: Blob;
   try {
-    const imgResp = await fetch(frameImageUrl, { signal: opts?.signal });
-    if (!imgResp.ok) return null;
-    imageBlob = await imgResp.blob();
+    const resp = await fetch(frameImageUrl, { signal: opts?.signal });
+    if (!resp.ok) return null;
+    imageBlob = await resp.blob();
   } catch {
     return null;
   }
@@ -251,26 +279,39 @@ export async function segmentRegion(
   form.append("model", hint.model ?? DEFAULT_SEGMENT_MODEL);
   if (hint.classHint) form.append("classHint", hint.classHint);
 
-  let resp: Response;
-  try {
-    resp = await fetch(endpoint, {
-      method: "POST",
-      body: form,
-      signal: opts?.signal,
-    });
-  } catch {
-    return null;
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_SEGMENT_TIMEOUT_MS;
+  const ctl = new AbortController();
+  const onExternalAbort = () => ctl.abort();
+  if (opts?.signal) {
+    opts.signal.addEventListener("abort", onExternalAbort, { once: true });
   }
-  if (!resp.ok) return null;
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
 
-  let data: ServerResponse;
   try {
-    data = (await resp.json()) as ServerResponse;
-  } catch {
-    return null;
-  }
+    let resp: Response;
+    try {
+      resp = await fetch(endpoint, {
+        method: "POST",
+        body: form,
+        signal: ctl.signal,
+      });
+    } catch {
+      // Timeout, abort, or network error — give up. Caller renders a no-op.
+      return null;
+    }
+    if (!resp.ok) return null;
 
-  return parseServerResponse(data, hint.bbox);
+    let data: ServerResponse;
+    try {
+      data = (await resp.json()) as ServerResponse;
+    } catch {
+      return null;
+    }
+    return parseServerResponse(data, hint.bbox);
+  } finally {
+    clearTimeout(timer);
+    opts?.signal?.removeEventListener("abort", onExternalAbort);
+  }
 }
 
 function parseServerResponse(
