@@ -2,23 +2,63 @@ import type { PolygonShape, RectShape, Shape } from "../types";
 import { shapeAabb } from "../shape-utils";
 
 /**
- * Backend segmentation models the frontend knows how to ask for.
- * The server advertises and dispatches to these via the `model` form
- * field. Keep this list in sync with `BACKEND_SEGMENT_REQUIREMENTS.md §2`.
+ * Backend segmentation model id. The actual list of accepted ids is
+ * advertised by the server at runtime via `GET /v1/segment/models`
+ * (see `fetchSegmentModels`). Kept as a plain string alias so callers
+ * are not coupled to a fixed enum.
  */
-export const SEGMENT_MODELS = [
-  { id: "sam3", label: "SAM 3" },
+export type SegmentModelId = string;
+
+export type SegmentModelInfo = {
+  id: SegmentModelId;
+  label: string;
+  /** Internal backend id reported by the server (e.g. `fastsam-s`). */
+  backend?: string | null;
+  /** True if the server marks this model as its default. */
+  default?: boolean;
+};
+
+/**
+ * Friendly labels for ids the frontend knows about. Unknown ids
+ * returned by the server fall back to the id itself.
+ */
+const KNOWN_MODEL_LABELS: Record<string, string> = {
+  sam3: "SAM 3",
+  sam2: "SAM 2",
+  sam: "SAM (v1)",
+  mask2former: "Mask2Former",
+  "mask-rcnn": "Mask R-CNN",
+};
+
+/**
+ * Built-in fallback list. Used only when the server is not reachable
+ * (or `/v1/segment/models` fails) so the UI can still render a select.
+ * Authoritative list comes from the server — see `fetchSegmentModels`.
+ */
+export const SEGMENT_MODELS: ReadonlyArray<SegmentModelInfo> = [
+  { id: "sam3", label: "SAM 3", default: true },
   { id: "sam2", label: "SAM 2" },
   { id: "sam", label: "SAM (v1)" },
   { id: "mask2former", label: "Mask2Former" },
   { id: "mask-rcnn", label: "Mask R-CNN" },
-] as const;
+];
 
-export type SegmentModelId = (typeof SEGMENT_MODELS)[number]["id"];
 export const DEFAULT_SEGMENT_MODEL: SegmentModelId = "sam3";
 
-export function isSegmentModelId(v: string): v is SegmentModelId {
-  return SEGMENT_MODELS.some((m) => m.id === v);
+/** Friendly label for a model id, falling back to the raw id. */
+export function segmentModelLabel(id: SegmentModelId): string {
+  return KNOWN_MODEL_LABELS[id] ?? id;
+}
+
+/**
+ * Validate a candidate id against a model list. Defaults to the
+ * built-in `SEGMENT_MODELS` fallback when no list is provided.
+ */
+export function isSegmentModelId(
+  v: string,
+  models: ReadonlyArray<{ id: string }> = SEGMENT_MODELS,
+): v is SegmentModelId {
+  return models.some((m) => m.id === v);
 }
 
 /**
@@ -103,6 +143,83 @@ export function getSegmentEndpoint(): string | null {
   } catch {
     return null;
   }
+}
+
+/** URL of `GET /v1/segment/models`, derived from the segment endpoint. */
+export function getSegmentModelsEndpoint(): string | null {
+  const base = getSegmentEndpoint();
+  if (!base) return null;
+  try {
+    const url = new URL(base);
+    url.pathname = url.pathname.replace(/\/+$/, "") + "/models";
+    // Drop query params (e.g. `async_job=true` inherited from the
+    // normalize endpoint) — the introspection route doesn't take any.
+    url.search = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export type SegmentModelsList = {
+  models: SegmentModelInfo[];
+  defaultId: SegmentModelId;
+};
+
+/**
+ * Fetches the live model list from `GET /v1/segment/models`. Returns
+ * `null` when the endpoint is not configured or the request fails —
+ * callers fall back to `SEGMENT_MODELS`.
+ */
+export async function fetchSegmentModels(
+  opts?: SegmentOptions,
+): Promise<SegmentModelsList | null> {
+  const endpoint = getSegmentModelsEndpoint();
+  if (!endpoint) return null;
+
+  let resp: Response;
+  try {
+    resp = await fetch(endpoint, { method: "GET", signal: opts?.signal });
+  } catch {
+    return null;
+  }
+  if (!resp.ok) return null;
+
+  let data: unknown;
+  try {
+    data = await resp.json();
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+
+  const rawModels = (data as { models?: unknown }).models;
+  if (!Array.isArray(rawModels)) return null;
+
+  const models: SegmentModelInfo[] = [];
+  for (const m of rawModels) {
+    if (!m || typeof m !== "object") continue;
+    const id = (m as { id?: unknown }).id;
+    if (typeof id !== "string" || !id) continue;
+    const backend = (m as { backend?: unknown }).backend;
+    const isDefault = (m as { default?: unknown }).default === true;
+    models.push({
+      id,
+      label: KNOWN_MODEL_LABELS[id] ?? id,
+      backend: typeof backend === "string" ? backend : null,
+      default: isDefault,
+    });
+  }
+  if (models.length === 0) return null;
+
+  const advertisedDefault = (data as { default?: unknown }).default;
+  const defaultId =
+    typeof advertisedDefault === "string" &&
+    models.some((m) => m.id === advertisedDefault)
+      ? advertisedDefault
+      : (models.find((m) => m.default)?.id ?? models[0].id);
+
+  return { models, defaultId };
 }
 
 /**
