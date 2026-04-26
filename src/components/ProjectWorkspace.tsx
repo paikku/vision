@@ -27,6 +27,7 @@ export function ProjectWorkspace({
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resetRef = useRef(useStore.getState().reset);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
 
   useKeyboardShortcuts();
 
@@ -133,20 +134,35 @@ export function ProjectWorkspace({
   useProjectSync({ projectId, videoId, initialized });
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      const el = e.target as HTMLElement;
+    const root = workspaceRef.current;
+    if (!root) return;
+
+    const isEditable = (el: HTMLElement | null) => {
+      if (!el) return false;
+      if (el.isContentEditable) return true;
       const tag = el.tagName.toLowerCase();
-      if (tag === "button") {
-        requestAnimationFrame(() => el.blur());
-      } else if (tag === "input") {
-        const type = (el as HTMLInputElement).type.toLowerCase();
-        if (["checkbox", "radio"].includes(type)) {
-          requestAnimationFrame(() => el.blur());
-        }
-      }
+      if (tag === "textarea" || tag === "select") return true;
+      if (tag !== "input") return false;
+      const type = (el as HTMLInputElement).type.toLowerCase();
+      return !["checkbox", "radio", "button", "submit", "reset"].includes(type);
     };
-    document.addEventListener("click", handler);
-    return () => document.removeEventListener("click", handler);
+
+    const clearFocusOnPointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target || !root.contains(target)) return;
+      if (isEditable(target)) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || active === document.body) return;
+      if (!root.contains(active)) return;
+      if (isEditable(active) && target.contains(active)) return;
+
+      requestAnimationFrame(() => active.blur());
+    };
+
+    root.addEventListener("pointerdown", clearFocusOnPointerDown, true);
+    return () =>
+      root.removeEventListener("pointerdown", clearFocusOnPointerDown, true);
   }, []);
 
   if (error) {
@@ -167,7 +183,7 @@ export function ProjectWorkspace({
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div ref={workspaceRef} className="flex h-screen flex-col overflow-hidden">
       <ProjectTopBar projectId={projectId} />
       {media ? (
         <div className="flex min-h-0 flex-1">
