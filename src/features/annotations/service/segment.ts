@@ -106,7 +106,33 @@ export type SegmentResult = {
 
 export type SegmentOptions = {
   signal?: AbortSignal;
+  /**
+   * Per-attempt timeout in ms. The request is aborted (and possibly
+   * retried — see `retries`) if the server does not respond in time.
+   * Defaults to {@link DEFAULT_SEGMENT_TIMEOUT_MS}.
+   */
+  timeoutMs?: number;
+  /**
+   * Maximum number of retry attempts after the initial request, applied
+   * only to transient failures (timeout, network error, 502/503/504).
+   * Defaults to {@link DEFAULT_SEGMENT_RETRIES}. Each retry waits with
+   * exponential backoff capped at 4s.
+   */
+  retries?: number;
 };
+
+/** Default per-attempt timeout for `segmentRegion`. */
+export const DEFAULT_SEGMENT_TIMEOUT_MS = 30_000;
+
+/** Default number of retry attempts after the initial request. */
+export const DEFAULT_SEGMENT_RETRIES = 2;
+
+/**
+ * Minimum interval (ms) between repeated segment requests on the same
+ * annotation. Used by `LabelPanel` to throttle the `H` shortcut so users
+ * who hold the key down don't flood the backend.
+ */
+export const SEGMENT_REQUEST_MIN_INTERVAL_MS = 1000;
 
 /** Raw server response shape — kept permissive so the server can evolve. */
 type ServerResponse = {
@@ -227,6 +253,14 @@ export async function fetchSegmentModels(
  * Returns `null` if segmentation is not configured or the request fails —
  * callers are expected to surface that as a no-op (the annotation stays
  * untouched) rather than a hard error.
+ *
+ * Stability:
+ *   - Each attempt is bounded by `timeoutMs` (default
+ *     {@link DEFAULT_SEGMENT_TIMEOUT_MS}) so a stuck backend does not pin
+ *     the UI in a "loading" state forever.
+ *   - Transient failures (timeout, network error, 502/503/504) are retried
+ *     up to `retries` times (default {@link DEFAULT_SEGMENT_RETRIES}) with
+ *     exponential backoff. Caller-initiated aborts skip retries.
  */
 export async function segmentRegion(
   frameImageUrl: string,
@@ -236,41 +270,130 @@ export async function segmentRegion(
   const endpoint = getSegmentEndpoint();
   if (!endpoint) return null;
 
-  let imageBlob: Blob;
+  const imageBlob = await fetchImageBlob(frameImageUrl, opts?.signal);
+  if (!imageBlob) return null;
+
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_SEGMENT_TIMEOUT_MS;
+  const maxRetries = Math.max(0, opts?.retries ?? DEFAULT_SEGMENT_RETRIES);
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (opts?.signal?.aborted) return null;
+
+    const form = new FormData();
+    form.append("file", imageBlob, "frame.jpg");
+    form.append("region", JSON.stringify(hint.bbox));
+    form.append("model", hint.model ?? DEFAULT_SEGMENT_MODEL);
+    if (hint.classHint) form.append("classHint", hint.classHint);
+
+    const outcome = await postSegmentOnce(endpoint, form, opts?.signal, timeoutMs);
+
+    if (outcome.kind === "ok") {
+      return parseServerResponse(outcome.data, hint.bbox);
+    }
+    if (outcome.kind === "aborted" || !outcome.transient) {
+      return null;
+    }
+    if (attempt >= maxRetries) return null;
+
+    // Exponential backoff: 250ms, 500ms, 1s, ... capped at 4s.
+    const delay = Math.min(4000, 250 * 2 ** attempt);
+    if (!(await sleepInterruptible(delay, opts?.signal))) return null;
+  }
+  return null;
+}
+
+async function fetchImageBlob(
+  url: string,
+  signal: AbortSignal | undefined,
+): Promise<Blob | null> {
   try {
-    const imgResp = await fetch(frameImageUrl, { signal: opts?.signal });
-    if (!imgResp.ok) return null;
-    imageBlob = await imgResp.blob();
+    const resp = await fetch(url, { signal });
+    if (!resp.ok) return null;
+    return await resp.blob();
   } catch {
     return null;
   }
+}
 
-  const form = new FormData();
-  form.append("file", imageBlob, "frame.jpg");
-  form.append("region", JSON.stringify(hint.bbox));
-  form.append("model", hint.model ?? DEFAULT_SEGMENT_MODEL);
-  if (hint.classHint) form.append("classHint", hint.classHint);
+type PostOutcome =
+  | { kind: "ok"; data: ServerResponse }
+  | { kind: "aborted" }
+  | { kind: "error"; transient: boolean };
 
-  let resp: Response;
-  try {
-    resp = await fetch(endpoint, {
-      method: "POST",
-      body: form,
-      signal: opts?.signal,
-    });
-  } catch {
-    return null;
+async function postSegmentOnce(
+  endpoint: string,
+  form: FormData,
+  externalSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<PostOutcome> {
+  const ctl = new AbortController();
+  const onExternalAbort = () => ctl.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) return { kind: "aborted" };
+    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
   }
-  if (!resp.ok) return null;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ctl.abort();
+  }, timeoutMs);
 
-  let data: ServerResponse;
   try {
-    data = (await resp.json()) as ServerResponse;
-  } catch {
-    return null;
-  }
+    let resp: Response;
+    try {
+      resp = await fetch(endpoint, {
+        method: "POST",
+        body: form,
+        signal: ctl.signal,
+      });
+    } catch {
+      if (externalSignal?.aborted) return { kind: "aborted" };
+      // Timeouts and network errors are both treated as transient so the
+      // caller's retry loop can give the backend a second chance. The
+      // `timedOut` flag is preserved for future logging hooks.
+      void timedOut;
+      return { kind: "error", transient: true };
+    }
 
-  return parseServerResponse(data, hint.bbox);
+    if (!resp.ok) {
+      const transient = isTransientHttpStatus(resp.status);
+      return { kind: "error", transient };
+    }
+
+    try {
+      const data = (await resp.json()) as ServerResponse;
+      return { kind: "ok", data };
+    } catch {
+      return { kind: "error", transient: false };
+    }
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
+  }
+}
+
+function isTransientHttpStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function sleepInterruptible(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve(false);
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function parseServerResponse(

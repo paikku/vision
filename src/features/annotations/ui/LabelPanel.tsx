@@ -7,6 +7,7 @@ import {
   fetchSegmentModels,
   isSegmentModelId,
   segmentRegion,
+  SEGMENT_REQUEST_MIN_INTERVAL_MS,
   toShape,
 } from "../service/segment";
 import { shapeAabb } from "../shape-utils";
@@ -41,6 +42,9 @@ export function LabelPanel() {
   const setSegmentModel = useStore((s) => s.setSegmentModel);
   const segmentModels = useStore((s) => s.segmentModels);
   const setSegmentModels = useStore((s) => s.setSegmentModels);
+  const segmentingIds = useStore((s) => s.segmentingIds);
+  const setSegmenting = useStore((s) => s.setSegmenting);
+  const markSegmentRequested = useStore((s) => s.markSegmentRequested);
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -58,10 +62,11 @@ export function LabelPanel() {
   const [bulkAnnotationId, setBulkAnnotationId] = useState<string | null>(null);
   const [annotCtxMenu, setAnnotCtxMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
-  // In-flight segmentation — one per annotation at a time. If H is pressed
-  // again on the same annotation, the previous request is cancelled.
+  // In-flight segmentation — one per annotation at a time. Repeat
+  // requests on the same annotation within `SEGMENT_REQUEST_MIN_INTERVAL_MS`
+  // are throttled (see `runSegment`); after that window the prior
+  // controller is aborted and a fresh request is issued.
   const segmentCtlRef = useRef<Map<string, AbortController>>(new Map());
-  const [segmentingIds, setSegmentingIds] = useState<Set<string>>(new Set());
   useEffect(() => {
     const controllers = segmentCtlRef.current;
     return () => {
@@ -110,15 +115,20 @@ export function LabelPanel() {
       if (!frame) return;
       const klass = state.classes.find((c) => c.id === ann.classId);
 
+      // Throttle repeated requests on the same annotation: ignore presses
+      // that arrive within the minimum interval of the last one. An
+      // in-flight request still allowed to proceed completes normally;
+      // we just refuse to *start* another one too soon.
+      const now = Date.now();
+      const last = state.lastSegmentRequestAt[annotationId] ?? 0;
+      if (now - last < SEGMENT_REQUEST_MIN_INTERVAL_MS) return;
+      markSegmentRequested(annotationId, now);
+
       const prev = segmentCtlRef.current.get(annotationId);
       if (prev) prev.abort();
       const ctl = new AbortController();
       segmentCtlRef.current.set(annotationId, ctl);
-      setSegmentingIds((s) => {
-        const next = new Set(s);
-        next.add(annotationId);
-        return next;
-      });
+      setSegmenting(annotationId, true);
 
       try {
         const result = await segmentRegion(
@@ -143,15 +153,10 @@ export function LabelPanel() {
         if (segmentCtlRef.current.get(annotationId) === ctl) {
           segmentCtlRef.current.delete(annotationId);
         }
-        setSegmentingIds((s) => {
-          if (!s.has(annotationId)) return s;
-          const next = new Set(s);
-          next.delete(annotationId);
-          return next;
-        });
+        setSegmenting(annotationId, false);
       }
     },
-    [updateAnnotation],
+    [markSegmentRequested, setSegmenting, updateAnnotation],
   );
 
   // Capture-phase listener priority rules:
@@ -356,7 +361,7 @@ export function LabelPanel() {
                       #{idx + 1} · {klass?.name ?? "—"}
                     </span>
                   </button>
-                  {segmentingIds.has(a.id) ? (
+                  {segmentingIds[a.id] ? (
                     <span
                       className="shrink-0 text-[10px] text-[var(--color-accent)]"
                       title="Segmenting…"
