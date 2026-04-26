@@ -1,39 +1,26 @@
 "use client";
 
-import { useEffect } from "react";
+import { useRef } from "react";
 import { useStore } from "@/lib/store";
 import { LabelPanel, Toolbar, useKeyboardShortcuts } from "@/features/annotations";
 import { FrameStrip } from "@/features/frames";
 import { MediaDropzone, TopBar } from "@/features/media";
+import { useReleaseNonTextFocus } from "@/shared/dom/useReleaseNonTextFocus";
 import { MainMediaPanel } from "./MainMediaPanel";
 
 export function Workspace() {
   const media = useStore((s) => s.media);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Register global keyboard shortcuts for the annotation workspace.
   useKeyboardShortcuts();
 
-  // After clicking any non-text interactive element (button, checkbox, etc.)
-  // immediately blur it so keyboard shortcuts remain active.
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      const el = e.target as HTMLElement;
-      const tag = el.tagName.toLowerCase();
-      if (tag === "button") {
-        requestAnimationFrame(() => el.blur());
-      } else if (tag === "input") {
-        const type = (el as HTMLInputElement).type.toLowerCase();
-        if (["checkbox", "radio"].includes(type)) {
-          requestAnimationFrame(() => el.blur());
-        }
-      }
-    };
-    document.addEventListener("click", handler);
-    return () => document.removeEventListener("click", handler);
-  }, []);
+  // Release focus from non-text-input elements after every interaction so
+  // global shortcuts stay live (see src/shared/dom/useReleaseNonTextFocus).
+  useReleaseNonTextFocus(rootRef);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div ref={rootRef} className="flex h-screen flex-col overflow-hidden">
       <TopBar />
       {media ? (
         <div className="flex min-h-0 flex-1">
