@@ -12,6 +12,7 @@ import {
   videoSourceUrl,
 } from "@/features/projects/service/api";
 import { useStore } from "@/lib/store";
+import { isEditableElement } from "@/shared/dom/isEditableElement";
 import { MainMediaPanel } from "./MainMediaPanel";
 import { ProjectTopBar } from "./ProjectTopBar";
 import { useProjectSync } from "./useProjectSync";
@@ -137,25 +138,16 @@ export function ProjectWorkspace({
     const root = workspaceRef.current;
     if (!root) return;
 
-    const isEditable = (el: HTMLElement | null) => {
-      if (!el) return false;
-      if (el.isContentEditable) return true;
-      const tag = el.tagName.toLowerCase();
-      if (tag === "textarea" || tag === "select") return true;
-      if (tag !== "input") return false;
-      const type = (el as HTMLInputElement).type.toLowerCase();
-      return !["checkbox", "radio", "button", "submit", "reset"].includes(type);
-    };
-
     const clearFocusOnPointerDown = (e: PointerEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target || !root.contains(target)) return;
-      if (isEditable(target)) return;
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!root.contains(target)) return;
+      if (isEditableElement(target)) return;
 
       const active = document.activeElement as HTMLElement | null;
       if (!active || active === document.body) return;
       if (!root.contains(active)) return;
-      if (isEditable(active) && target.contains(active)) return;
+      if (active.contains(target)) return;
 
       requestAnimationFrame(() => active.blur());
     };
