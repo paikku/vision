@@ -1,5 +1,10 @@
 import type { StateCreator } from "zustand";
-import { DEFAULT_SEGMENT_MODEL, type SegmentModelId } from "./service/segment";
+import {
+  DEFAULT_SEGMENT_MODEL,
+  SEGMENT_MODELS,
+  type SegmentModelId,
+  type SegmentModelInfo,
+} from "./service/segment";
 import type {
   Annotation,
   ClassShortcutKey,
@@ -30,6 +35,12 @@ export type AnnotationsSlice = {
   activeToolId: ToolId;
   interactionMode: "draw" | "edit";
   segmentModel: SegmentModelId;
+  /**
+   * Available segmentation models advertised by the server (via
+   * `GET /v1/segment/models`). Seeded from the built-in fallback so
+   * the UI has something to render before the fetch completes.
+   */
+  segmentModels: SegmentModelInfo[];
 
   addClass: (name?: string) => LabelClass;
   removeClass: (id: string) => void;
@@ -47,6 +58,7 @@ export type AnnotationsSlice = {
   setActiveTool: (id: ToolId) => void;
   setInteractionMode: (mode: "draw" | "edit") => void;
   setSegmentModel: (id: SegmentModelId) => void;
+  setSegmentModels: (models: SegmentModelInfo[]) => void;
 };
 
 export const createAnnotationsSlice: StateCreator<
@@ -63,6 +75,7 @@ export const createAnnotationsSlice: StateCreator<
   activeToolId: "rect",
   interactionMode: "draw",
   segmentModel: DEFAULT_SEGMENT_MODEL,
+  segmentModels: [...SEGMENT_MODELS],
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -137,4 +150,5 @@ export const createAnnotationsSlice: StateCreator<
   setActiveTool: (id) => set({ activeToolId: id }),
   setInteractionMode: (interactionMode) => set({ interactionMode }),
   setSegmentModel: (segmentModel) => set({ segmentModel }),
+  setSegmentModels: (segmentModels) => set({ segmentModels }),
 });

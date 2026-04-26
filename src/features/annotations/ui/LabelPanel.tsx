@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { isEditableElement } from "@/shared/dom/isEditableElement";
 import {
-  SEGMENT_MODELS,
+  fetchSegmentModels,
   isSegmentModelId,
   segmentRegion,
   toShape,
@@ -39,6 +39,8 @@ export function LabelPanel() {
   const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
   const segmentModel = useStore((s) => s.segmentModel);
   const setSegmentModel = useStore((s) => s.setSegmentModel);
+  const segmentModels = useStore((s) => s.segmentModels);
+  const setSegmentModels = useStore((s) => s.setSegmentModels);
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -75,6 +77,25 @@ export function LabelPanel() {
     window.addEventListener("pointerdown", handler);
     return () => window.removeEventListener("pointerdown", handler);
   }, [annotCtxMenu]);
+
+  // Fetch the live model list from `GET /v1/segment/models` once on
+  // mount. Falls back silently to the seeded built-in list if the
+  // server is offline or the endpoint isn't configured.
+  useEffect(() => {
+    const ctl = new AbortController();
+    void (async () => {
+      const list = await fetchSegmentModels({ signal: ctl.signal });
+      if (ctl.signal.aborted || !list) return;
+      setSegmentModels(list.models);
+      // If the current selection isn't advertised by the server, snap
+      // to the server-advertised default.
+      const current = useStore.getState().segmentModel;
+      if (!list.models.some((m) => m.id === current)) {
+        setSegmentModel(list.defaultId);
+      }
+    })();
+    return () => ctl.abort();
+  }, [setSegmentModel, setSegmentModels]);
 
   const frameAnnotations = annotations.filter(
     (a) => a.frameId === activeFrameId,
@@ -384,12 +405,12 @@ export function LabelPanel() {
               value={segmentModel}
               onChange={(e) => {
                 const v = e.target.value;
-                if (isSegmentModelId(v)) setSegmentModel(v);
+                if (isSegmentModelId(v, segmentModels)) setSegmentModel(v);
               }}
               title="Backend segmentation model"
               className="rounded border border-[var(--color-line)] bg-[var(--color-surface-2)] px-1 py-0.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
             >
-              {SEGMENT_MODELS.map((m) => (
+              {segmentModels.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
             </select>
