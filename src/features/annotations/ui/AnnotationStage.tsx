@@ -10,6 +10,12 @@ import {
 import { useStore } from "@/lib/store";
 import { useStageTransform } from "@/shared/hooks/useStageTransform";
 import { useDrawingTool } from "../hooks/useDrawingTool";
+import {
+  polygonPath,
+  shapeAabb,
+  shapeContains,
+  translateShape,
+} from "../shape-utils";
 import { TOOLS } from "../tools/registry";
 import type { LabelClass, Shape } from "../types";
 
@@ -96,32 +102,36 @@ export function AnnotationStage() {
         lastClientY: number;
       }
     | {
-        mode: "move" | "resize";
+        mode: "move";
         annotationId: string;
         startClientX: number;
         startClientY: number;
         hasMoved: boolean;
-        startShape: { x: number; y: number; w: number; h: number };
+        startShape: Shape;
+      }
+    | {
+        mode: "resize-rect";
+        annotationId: string;
+        corner: "tl" | "br";
+        startClientX: number;
+        startClientY: number;
+        hasMoved: boolean;
+        startShape: { kind: "rect"; x: number; y: number; w: number; h: number };
+      }
+    | {
+        mode: "resize-vertex";
+        annotationId: string;
+        ringIndex: number;
+        vertexIndex: number;
+        startClientX: number;
+        startClientY: number;
+        hasMoved: boolean;
+        startShape: Extract<Shape, { kind: "polygon" }>;
       }
   >(null);
 
   const DRAG_ACTIVATE_DISTANCE_PX = 2;
-
-  // Move: only clamp position, never touch size.
-  const clampMove = useCallback((x: number, y: number, w: number, h: number) => ({
-    x: Math.max(0, Math.min(1 - w, x)),
-    y: Math.max(0, Math.min(1 - h, y)),
-    w,
-    h,
-  }), []);
-
-  // Resize: enforce minimum size, keep top-left fixed.
-  const clampResize = useCallback((x: number, y: number, w: number, h: number) => {
-    const minSize = 0.0005;
-    const nextW = Math.max(minSize, Math.min(1 - x, w));
-    const nextH = Math.max(minSize, Math.min(1 - y, h));
-    return { x, y, w: nextW, h: nextH };
-  }, []);
+  const RECT_MIN_SIZE = 0.0005;
 
   if (!frame) {
     return (
@@ -164,7 +174,7 @@ export function AnnotationStage() {
     }
 
     const active = frameAnnotations.find((a) => a.id === drag.annotationId);
-    if (!active || active.shape.kind !== "rect" || !fitState) return;
+    if (!active || !fitState) return;
     const rawDx = e.clientX - drag.startClientX;
     const rawDy = e.clientY - drag.startClientY;
     if (!drag.hasMoved) {
@@ -173,12 +183,54 @@ export function AnnotationStage() {
     }
     const dx = rawDx / (fitState.width * zoom);
     const dy = rawDy / (fitState.height * zoom);
-    const start = drag.startShape;
-    const next =
-      drag.mode === "move"
-        ? clampMove(start.x + dx, start.y + dy, start.w, start.h)
-        : clampResize(start.x, start.y, start.w + dx, start.h + dy);
-    updateAnnotation(active.id, { shape: { kind: "rect", ...next } });
+
+    if (drag.mode === "move") {
+      updateAnnotation(active.id, {
+        shape: translateShape(drag.startShape, dx, dy),
+      });
+      return;
+    }
+
+    if (drag.mode === "resize-rect") {
+      const s = drag.startShape;
+      if (drag.corner === "br") {
+        // Top-left fixed; bottom-right follows cursor.
+        const w = Math.max(RECT_MIN_SIZE, Math.min(1 - s.x, s.w + dx));
+        const h = Math.max(RECT_MIN_SIZE, Math.min(1 - s.y, s.h + dy));
+        updateAnnotation(active.id, {
+          shape: { kind: "rect", x: s.x, y: s.y, w, h },
+        });
+      } else {
+        // Bottom-right fixed; top-left follows cursor.
+        const brX = s.x + s.w;
+        const brY = s.y + s.h;
+        const nx = Math.max(0, Math.min(brX - RECT_MIN_SIZE, s.x + dx));
+        const ny = Math.max(0, Math.min(brY - RECT_MIN_SIZE, s.y + dy));
+        updateAnnotation(active.id, {
+          shape: { kind: "rect", x: nx, y: ny, w: brX - nx, h: brY - ny },
+        });
+      }
+      return;
+    }
+
+    if (drag.mode === "resize-vertex") {
+      const s = drag.startShape;
+      const ri = drag.ringIndex;
+      const vi = drag.vertexIndex;
+      const rings = s.rings.map((ring, r) =>
+        r !== ri
+          ? ring
+          : ring.map((p, v) =>
+              v !== vi
+                ? p
+                : {
+                    x: Math.max(0, Math.min(1, p.x + dx)),
+                    y: Math.max(0, Math.min(1, p.y + dy)),
+                  },
+            ),
+      );
+      updateAnnotation(active.id, { shape: { kind: "polygon", rings } });
+    }
   };
 
   const onEditStagePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -250,17 +302,15 @@ export function AnnotationStage() {
               const b = stageRef.current.getBoundingClientRect();
               const mx = (e.clientX - b.left) / b.width;
               const my = (e.clientY - b.top) / b.height;
-              const hits = frameAnnotations.filter((a) => {
-                if (a.shape.kind !== "rect") return false;
-                const { x, y, w, h } = a.shape;
-                return mx >= x && mx <= x + w && my >= y && my <= y + h;
-              });
+              const hits = frameAnnotations.filter((a) =>
+                shapeContains(a.shape, mx, my),
+              );
               if (hits.length === 0) { setHoveredAnnotation(null); return; }
               const closest = hits.reduce((best, cur) => {
-                const bs = best.shape as { x: number; y: number; w: number; h: number };
-                const cs = cur.shape as { x: number; y: number; w: number; h: number };
-                const bd = Math.hypot(mx - (bs.x + bs.w / 2), my - (bs.y + bs.h / 2));
-                const cd = Math.hypot(mx - (cs.x + cs.w / 2), my - (cs.y + cs.h / 2));
+                const bb = shapeAabb(best.shape);
+                const cb = shapeAabb(cur.shape);
+                const bd = Math.hypot(mx - (bb.x + bb.w / 2), my - (bb.y + bb.h / 2));
+                const cd = Math.hypot(mx - (cb.x + cb.w / 2), my - (cb.y + cb.h / 2));
                 return cd < bd ? cur : best;
               });
               setHoveredAnnotation(closest.id);
@@ -282,30 +332,12 @@ export function AnnotationStage() {
                     e.stopPropagation();
                     selectAnnotation(a.id);
                   } : undefined}
-                  showHandle={isEditMode && a.id === selectedAnnotationId}
                   onStartMove={isEditMode ? (e) => {
-                    if (a.shape.kind !== "rect") return;
                     e.stopPropagation();
                     e.preventDefault();
                     selectAnnotation(a.id);
                     dragRef.current = {
                       mode: "move",
-                      annotationId: a.id,
-                      startClientX: e.clientX,
-                      startClientY: e.clientY,
-                      hasMoved: false,
-                      startShape: a.shape,
-                    };
-                    stageRef.current?.setPointerCapture(e.pointerId);
-                  } : undefined}
-                  onStartResize={isEditMode ? (e) => {
-                    if (a.shape.kind !== "rect") return;
-                    e.stopPropagation();
-                    e.preventDefault();
-                    selectAnnotation(a.id);
-                    setHoveredHandleAnnotationId(a.id);
-                    dragRef.current = {
-                      mode: "resize",
                       annotationId: a.id,
                       startClientX: e.clientX,
                       startClientY: e.clientY,
@@ -329,21 +361,115 @@ export function AnnotationStage() {
             )}
           </svg>
 
-          {/* Rect label overlays — outside box, top-right corner, no background.
+          {/* Edit-mode resize/vertex handles — rendered as HTML so they're
+              always circular (the SVG above uses preserveAspectRatio="none"
+              which distorts <circle>) and get native cursor feedback. */}
+          {isEditMode && selectedAnnotationId && (() => {
+            const a = frameAnnotations.find((x) => x.id === selectedAnnotationId);
+            if (!a) return null;
+            const klass = classes.find((c) => c.id === a.classId);
+            if (!klass) return null;
+            if (a.shape.kind === "rect") {
+              const s = a.shape;
+              const startCorner = (corner: "tl" | "br") =>
+                (e: ReactPointerEvent<HTMLDivElement>) => {
+                  if (a.shape.kind !== "rect") return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                  selectAnnotation(a.id);
+                  setHoveredHandleAnnotationId(a.id);
+                  dragRef.current = {
+                    mode: "resize-rect",
+                    annotationId: a.id,
+                    corner,
+                    startClientX: e.clientX,
+                    startClientY: e.clientY,
+                    hasMoved: false,
+                    startShape: a.shape,
+                  };
+                  stageRef.current?.setPointerCapture(e.pointerId);
+                };
+              return (
+                <>
+                  <Handle x={s.x} y={s.y} color={klass.color} zoom={zoom} onPointerDown={startCorner("tl")} />
+                  <Handle x={s.x + s.w} y={s.y + s.h} color={klass.color} zoom={zoom} onPointerDown={startCorner("br")} />
+                </>
+              );
+            }
+            if (a.shape.kind === "polygon") {
+              const shape = a.shape;
+              return shape.rings.flatMap((ring, ri) =>
+                ring.map((p, vi) => (
+                  <Handle
+                    key={`${ri}-${vi}`}
+                    x={p.x}
+                    y={p.y}
+                    color={klass.color}
+                    zoom={zoom}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      selectAnnotation(a.id);
+                      setHoveredHandleAnnotationId(a.id);
+                      dragRef.current = {
+                        mode: "resize-vertex",
+                        annotationId: a.id,
+                        ringIndex: ri,
+                        vertexIndex: vi,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        hasMoved: false,
+                        startShape: shape,
+                      };
+                      stageRef.current?.setPointerCapture(e.pointerId);
+                    }}
+                  />
+                )),
+              );
+            }
+            return null;
+          })()}
+
+          {/* Draft polygon vertex dots — non-interactive, also HTML to
+              stay circular. The first vertex is enlarged + filled once
+              the ring is closable (≥3 points) so the snap-close target
+              is visible. */}
+          {draftShape?.kind === "polygon" && (() => {
+            const cls = classes.find((c) => c.id === activeClassId) ?? classes[0];
+            if (!cls) return null;
+            const ring = draftShape.rings[0] ?? [];
+            const canClose = ring.length >= 3;
+            return ring.map((p, i) => {
+              const isFirst = i === 0;
+              const highlight = isFirst && canClose;
+              return (
+                <Dot
+                  key={i}
+                  x={p.x}
+                  y={p.y}
+                  zoom={zoom}
+                  size={highlight ? 11 : 7}
+                  fill={highlight ? cls.color : "white"}
+                  stroke={cls.color}
+                />
+              );
+            });
+          })()}
+
+          {/* Label overlays — outside AABB, top-right corner, no background.
               transform: scale(1/zoom) counteracts the parent stageRef scale so the
               label stays at a fixed pixel size regardless of zoom level. */}
           {showRectLabels && frameAnnotations.map((a) => {
-            if (a.shape.kind !== "rect") return null;
             const klass = classes.find((c) => c.id === a.classId);
             if (!klass) return null;
-            const s = a.shape;
+            const b = shapeAabb(a.shape);
             return (
               <div
                 key={a.id}
                 className="pointer-events-none absolute select-none leading-none whitespace-nowrap"
                 style={{
-                  left: `${(s.x + s.w) * 100}%`,
-                  top: `${s.y * 100}%`,
+                  left: `${(b.x + b.w) * 100}%`,
+                  top: `${b.y * 100}%`,
                   transform: `scale(${1 / zoom})`,
                   transformOrigin: "0 0",
                   fontSize: "11px",
@@ -456,8 +582,6 @@ function ShapeView({
   onPointerEnter,
   onPointerLeave,
   onStartMove,
-  onStartResize,
-  showHandle,
   zoom,
 }: {
   shape: Shape;
@@ -469,19 +593,55 @@ function ShapeView({
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
   onStartMove?: (e: ReactPointerEvent<SVGGElement>) => void;
-  onStartResize?: (e: ReactPointerEvent<SVGRectElement>) => void;
-  showHandle?: boolean;
   zoom: number;
 }) {
+  const visualZoom = Math.max(0.25, zoom);
+  const fillOpacity = hovered || selected ? "3a" : "22";
+  const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
+
+  if (shape.kind === "polygon") {
+    const d = polygonPath(shape.rings, { closed: !draft });
+    if (!d) return null;
+    // Handle and vertex-dot rendering live outside the SVG — see
+    // AnnotationStage for the HTML overlay. The SVG here only paints
+    // the shape body + an optional hover glow.
+    return (
+      <g
+        data-annotation-interactive="true"
+        onPointerDown={onStartMove ?? onSelect}
+        onPointerEnter={onPointerEnter}
+        onPointerLeave={onPointerLeave}
+        style={{ cursor: onStartMove ? "move" : undefined }}
+      >
+        <path
+          d={d}
+          fill={draft ? "none" : `${klass.color}${fillOpacity}`}
+          fillRule="evenodd"
+          stroke={klass.color}
+          strokeWidth={strokeWidth}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          strokeDasharray={draft ? "5 4" : undefined}
+          vectorEffect="non-scaling-stroke"
+          style={{ cursor: onStartMove ? "move" : onSelect ? "pointer" : undefined }}
+        />
+        {hovered && !selected && !draft && (
+          <path
+            d={d}
+            fill="none"
+            fillRule="evenodd"
+            stroke={klass.color}
+            strokeWidth={4 / visualZoom}
+            strokeOpacity={0.25}
+            vectorEffect="non-scaling-stroke"
+            style={{ pointerEvents: "none" }}
+          />
+        )}
+      </g>
+    );
+  }
+
   if (shape.kind === "rect") {
-    const visualZoom = Math.max(0.25, zoom);
-    const fillOpacity = hovered || selected ? "3a" : "22";
-    const strokeWidth = (selected ? 2.5 : hovered ? 2.2 : 1.6) / visualZoom;
-    // Hit area: ~20 screen-pixels regardless of zoom, capped to 45% of shape.
-    // 0.025/zoom converts to a constant visual pixel size (assuming ~800px stage).
-    const hitNorm = Math.min(0.06, 0.055 / zoom);
-    const hitWidth = Math.min(shape.w * 0.45, hitNorm);
-    const hitHeight = Math.min(shape.h * 0.45, hitNorm);
     return (
       <g
         data-annotation-interactive="true"
@@ -517,23 +677,90 @@ function ShapeView({
             style={{ pointerEvents: "none" }}
           />
         )}
-        {/* Resize hit area (no visual, cursor only) */}
-        {showHandle && !draft && (
-          <rect
-            x={shape.x + shape.w - hitWidth}
-            y={shape.y + shape.h - hitHeight}
-            width={hitWidth}
-            height={hitHeight}
-            fill="transparent"
-            onPointerDown={onStartResize}
-            data-annotation-interactive="true"
-            style={{ cursor: "nwse-resize" }}
-          />
-        )}
       </g>
     );
   }
   return null;
+}
+
+/**
+ * Interactive edit-mode handle. Rendered as HTML so it's always a
+ * perfect circle at any frame aspect ratio and supports native cursor
+ * feedback (resize / grab). Positioned at normalized (x, y) within the
+ * stageRef's aspect-fitted container; counter-scaled by 1/zoom so the
+ * visual size stays constant across zoom levels.
+ */
+function Handle({
+  x,
+  y,
+  color,
+  zoom,
+  onPointerDown,
+}: {
+  x: number;
+  y: number;
+  color: string;
+  zoom: number;
+  onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  const visualZoom = Math.max(0.25, zoom);
+  const SIZE = 10; // visual px at zoom=1
+  return (
+    <div
+      data-annotation-interactive="true"
+      onPointerDown={onPointerDown}
+      style={{
+        position: "absolute",
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        width: SIZE,
+        height: SIZE,
+        borderRadius: "50%",
+        background: "white",
+        border: `1.5px solid ${color}`,
+        boxShadow: "0 0 0 1px rgba(0,0,0,0.35)",
+        transform: `translate(-50%, -50%) scale(${1 / visualZoom})`,
+        transformOrigin: "center",
+        cursor: "pointer",
+        touchAction: "none",
+      }}
+    />
+  );
+}
+
+/** Non-interactive point marker (polygon draft vertices). */
+function Dot({
+  x,
+  y,
+  zoom,
+  size,
+  fill,
+  stroke,
+}: {
+  x: number;
+  y: number;
+  zoom: number;
+  size: number;
+  fill: string;
+  stroke: string;
+}) {
+  const visualZoom = Math.max(0.25, zoom);
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background: fill,
+        border: `1.5px solid ${stroke}`,
+        transform: `translate(-50%, -50%) scale(${1 / visualZoom})`,
+        transformOrigin: "center",
+      }}
+    />
+  );
 }
 
 // Retained for possible future use

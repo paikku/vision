@@ -82,11 +82,16 @@ MediaSource → Frame[] → Annotation[]
 
 ```ts
 begin(start: Point): ShapeDraft
-// ShapeDraft.update(current) → 미리보기 Shape
-// ShapeDraft.commit(end)     → Shape | null (null이면 버림)
+// ShapeDraft.update(current)   → 미리보기 Shape (마우스 hover)
+// ShapeDraft.addPoint(p)       → { done, shape }
+//   done=true  → shape 로 확정(null 이면 폐기)
+//   done=false → shape 로 미리보기 갱신하고 계속 드래프트
+// ShapeDraft.tryClose?()       → 명시적 닫기 요청(Enter). 닫을 수 없으면 null
 ```
 
-현재 도구: `rect` (단축키 R), `MIN_SIZE = 0.0005`(~0.05% of frame)
+현재 도구:
+- `rect` (단축키 R): 2-클릭, `MIN_SIZE = 0.0005`
+- `polygon` (단축키 P): N-클릭 꼭짓점 누적, **`Enter` 또는 첫 vertex 클릭으로 닫힘**(3점 이상 필요). 첫 vertex 스냅 거리는 `CLOSE_ON_FIRST_DIST = 0.005`(≈ 첫 vertex dot 크기와 동일) — 일반적 클릭은 항상 새 vertex 추가, 의도적으로 첫 vertex 를 클릭해야 닫힘. 연속 중복점은 `MIN_STEP = 0.001`로 억제. Edit 모드에서는 모든 vertex 에 draggable 핸들.
 
 새 도구 추가 절차:
 1. `features/annotations/tools/` 하위에 `AnnotationTool` 구현
@@ -142,7 +147,8 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 1. 클래스 행 hover + `Q/W/E/R` → 단축키 할당 **+ active class 전환**
 2. annotation 행 hover + `D` → hover된 annotation 삭제
 3. annotation 행 hover + `Q/W/E/R` → hover된 annotation의 class 변경
-4. 소비되지 않은 키 → `useKeyboardShortcuts`(버블 단계)
+4. annotation 행 hover + `H` → 서버 세그먼테이션으로 shape refine (`features/annotations/service/segment.ts`, `BACKEND_SEGMENT_REQUIREMENTS.md`)
+5. 소비되지 않은 키 → `useKeyboardShortcuts`(버블 단계)
 
 전역 단축키 (`useKeyboardShortcuts`):
 

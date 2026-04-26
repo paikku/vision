@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { polygonPath, shapeAabb } from "@/features/annotations";
 import type { Annotation, LabelClass } from "@/features/annotations/types";
 import type {
   Project,
@@ -734,20 +735,36 @@ function FramePreviewTooltip({
           className="absolute inset-0 h-full w-full"
         >
           {annotations.map((a) => {
-            if (a.shape.kind !== "rect") return null;
             const c = bundle?.classById.get(a.classId);
             const color = c?.color ?? "#5b8cff";
+            if (a.shape.kind === "rect") {
+              return (
+                <rect
+                  key={a.id}
+                  x={a.shape.x}
+                  y={a.shape.y}
+                  width={a.shape.w}
+                  height={a.shape.h}
+                  fill={color}
+                  fillOpacity={0.15}
+                  stroke={color}
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            }
+            const d = polygonPath(a.shape.rings);
+            if (!d) return null;
             return (
-              <rect
+              <path
                 key={a.id}
-                x={a.shape.x}
-                y={a.shape.y}
-                width={a.shape.w}
-                height={a.shape.h}
+                d={d}
                 fill={color}
                 fillOpacity={0.15}
+                fillRule="evenodd"
                 stroke={color}
                 strokeWidth={2}
+                strokeLinejoin="round"
                 vectorEffect="non-scaling-stroke"
               />
             );
@@ -757,16 +774,16 @@ function FramePreviewTooltip({
             corner. HTML-positioned so text isn't distorted by the SVG's
             non-uniform preserveAspectRatio. */}
         {annotations.map((a) => {
-          if (a.shape.kind !== "rect") return null;
           const c = bundle?.classById.get(a.classId);
           const color = c?.color ?? "#5b8cff";
+          const b = shapeAabb(a.shape);
           return (
             <span
               key={`label-${a.id}`}
               className="absolute rounded-sm px-1 text-[10px] font-medium text-black"
               style={{
-                left: `${a.shape.x * 100}%`,
-                top: `${a.shape.y * 100}%`,
+                left: `${b.x * 100}%`,
+                top: `${b.y * 100}%`,
                 background: color,
                 transform: "translateY(-100%)",
               }}

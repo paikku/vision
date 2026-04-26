@@ -17,8 +17,21 @@ export type RectShape = {
   h: number;
 };
 
-/** Future shape types live next to RectShape and the union expands. */
-export type Shape = RectShape;
+/** Single normalized point in image-space. */
+export type PolygonPoint = { x: number; y: number };
+
+/**
+ * Closed polygon in normalized image-space. Ring 0 is the outer boundary,
+ * rings 1..n are holes (even-odd fill). Rings are NOT explicitly closed —
+ * the last point implicitly connects to the first. Each ring must have
+ * at least 3 points.
+ */
+export type PolygonShape = {
+  kind: "polygon";
+  rings: PolygonPoint[][];
+};
+
+export type Shape = RectShape | PolygonShape;
 
 export type Annotation = {
   id: string;
