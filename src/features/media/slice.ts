@@ -3,14 +3,8 @@ import type { MediaSource } from "./types";
 
 export type MediaSlice = {
   media: MediaSource | null;
-  centerViewMode: "video" | "frame";
-  setCenterViewMode: (mode: "video" | "frame") => void;
 };
 
-export const createMediaSlice: StateCreator<MediaSlice, [], [], MediaSlice> = (
-  set,
-) => ({
+export const createMediaSlice: StateCreator<MediaSlice, [], [], MediaSlice> = () => ({
   media: null,
-  centerViewMode: "video",
-  setCenterViewMode: (centerViewMode) => set({ centerViewMode }),
 });

@@ -7,8 +7,10 @@ import {
 } from "./service/segment";
 import type {
   Annotation,
+  Classification,
   ClassShortcutKey,
   LabelClass,
+  TaskType,
   ToolId,
 } from "./types";
 
@@ -27,31 +29,26 @@ const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
 
 export type AnnotationsSlice = {
+  /** Active label set's task type. Drives which UI mode the workspace shows. */
+  taskType: TaskType;
+  setTaskType: (t: TaskType) => void;
+
   classes: LabelClass[];
   activeClassId: string | null;
+
+  /** Shape annotations (bbox / polygon). */
   annotations: Annotation[];
   selectedAnnotationId: string | null;
   hoveredAnnotationId: string | null;
+
+  /** Image-level class assignments (classify task). */
+  classifications: Classification[];
+
   activeToolId: ToolId;
   interactionMode: "draw" | "edit";
   segmentModel: SegmentModelId;
-  /**
-   * Available segmentation models advertised by the server (via
-   * `GET /v1/segment/models`). Seeded from the built-in fallback so
-   * the UI has something to render before the fetch completes.
-   */
   segmentModels: SegmentModelInfo[];
-  /**
-   * Annotation ids currently waiting on a segmentation response. Surfaced
-   * here (rather than as local state) so the canvas overlay and the side
-   * panel can reflect the same loading status.
-   */
   segmentingIds: Record<string, true>;
-  /**
-   * Per-annotation timestamp of the most recent segment request. Used to
-   * enforce a minimum interval between repeated `H` presses on the same
-   * annotation (see `LabelPanel`).
-   */
   lastSegmentRequestAt: Record<string, number>;
 
   addClass: (name?: string) => LabelClass;
@@ -67,6 +64,10 @@ export type AnnotationsSlice = {
   selectAnnotation: (id: string | null) => void;
   setHoveredAnnotation: (id: string | null) => void;
 
+  /** Toggle a (imageId, classId) classification. Multi-label, idempotent. */
+  toggleClassification: (imageId: string, classId: string) => void;
+  setClassification: (imageId: string, classId: string, on: boolean) => void;
+
   setActiveTool: (id: ToolId) => void;
   setInteractionMode: (mode: "draw" | "edit") => void;
   setSegmentModel: (id: SegmentModelId) => void;
@@ -81,9 +82,11 @@ export const createAnnotationsSlice: StateCreator<
   [],
   AnnotationsSlice
 > = (set, get) => ({
+  taskType: "bbox",
   classes: [{ id: "default", name: "object", color: PALETTE[0] }],
   activeClassId: "default",
   annotations: [],
+  classifications: [],
   selectedAnnotationId: null,
   hoveredAnnotationId: null,
   activeToolId: "rect",
@@ -92,6 +95,18 @@ export const createAnnotationsSlice: StateCreator<
   segmentModels: [...SEGMENT_MODELS],
   segmentingIds: {},
   lastSegmentRequestAt: {},
+
+  setTaskType: (taskType) =>
+    set((s) => ({
+      taskType,
+      // For polygon task default tool to polygon, bbox to rect.
+      activeToolId:
+        taskType === "polygon"
+          ? "polygon"
+          : taskType === "bbox"
+            ? "rect"
+            : s.activeToolId,
+    })),
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -107,9 +122,12 @@ export const createAnnotationsSlice: StateCreator<
     set((s) => {
       const classes = s.classes.filter((c) => c.id !== id);
       const annotations = s.annotations.filter((a) => a.classId !== id);
+      const classifications = s.classifications.filter(
+        (c) => c.classId !== id,
+      );
       const activeClassId =
         s.activeClassId === id ? (classes[0]?.id ?? null) : s.activeClassId;
-      return { classes, annotations, activeClassId };
+      return { classes, annotations, classifications, activeClassId };
     }),
 
   renameClass: (id, name) =>
@@ -132,7 +150,7 @@ export const createAnnotationsSlice: StateCreator<
           c.id === classId
             ? (key ?? undefined)
             : c.shortcutKey === key
-              ? undefined // remove from previous holder
+              ? undefined
               : c.shortcutKey,
       })),
     })),
@@ -178,6 +196,55 @@ export const createAnnotationsSlice: StateCreator<
 
   selectAnnotation: (id) => set({ selectedAnnotationId: id }),
   setHoveredAnnotation: (id) => set({ hoveredAnnotationId: id }),
+
+  toggleClassification: (imageId, classId) =>
+    set((s) => {
+      const has = s.classifications.some(
+        (c) => c.imageId === imageId && c.classId === classId,
+      );
+      if (has) {
+        return {
+          classifications: s.classifications.filter(
+            (c) => !(c.imageId === imageId && c.classId === classId),
+          ),
+        };
+      }
+      const c: Classification = {
+        id: uid(),
+        imageId,
+        classId,
+        createdAt: Date.now(),
+      };
+      return { classifications: [...s.classifications, c] };
+    }),
+
+  setClassification: (imageId, classId, on) =>
+    set((s) => {
+      const has = s.classifications.some(
+        (c) => c.imageId === imageId && c.classId === classId,
+      );
+      if (on && !has) {
+        return {
+          classifications: [
+            ...s.classifications,
+            {
+              id: uid(),
+              imageId,
+              classId,
+              createdAt: Date.now(),
+            },
+          ],
+        };
+      }
+      if (!on && has) {
+        return {
+          classifications: s.classifications.filter(
+            (c) => !(c.imageId === imageId && c.classId === classId),
+          ),
+        };
+      }
+      return s;
+    }),
 
   setActiveTool: (id) => set({ activeToolId: id }),
   setInteractionMode: (interactionMode) => set({ interactionMode }),

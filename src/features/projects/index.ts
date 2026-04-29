@@ -1,9 +1,13 @@
 export type {
+  ImageMeta,
+  ImageSourceKind,
+  LabelSetData,
+  LabelSetMeta,
+  LabelSetSummary,
   Project,
   ProjectMember,
   ProjectSummary,
-  StoredFrame,
-  VideoData,
-  VideoMeta,
-  VideoSummary,
+  ResourceKind,
+  ResourceMeta,
+  ResourceSummary,
 } from "./types";

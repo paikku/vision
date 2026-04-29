@@ -5,7 +5,6 @@ import {
   type AnnotationsSlice,
   createAnnotationsSlice,
 } from "@/features/annotations/slice";
-import { exportJson as exportJsonImpl } from "@/features/export/service/exportJson";
 import {
   type FramesSlice,
   createFramesSlice,
@@ -20,10 +19,13 @@ import type { MediaSource } from "@/features/media/types";
 /**
  * Composition root for the workspace store.
  *
- * Each feature owns a slice (state + intra-feature actions). Cross-slice
- * transitions — object URL teardown, cascading deletes, global reset — live
- * here, in one place, so a future event bus can replace this block without
- * touching features.
+ * Two pages mount the store:
+ *   - frame extraction:  hydrate `media` + an in-flight `frames` list
+ *   - labeling:          hydrate `frames` from a label set + classes / annotations / classifications
+ *
+ * Cross-slice transitions (object URL teardown, cascading deletes, reset)
+ * live here so a future event bus can replace this block without touching
+ * features.
  */
 export type StoreState = MediaSlice &
   FramesSlice &
@@ -32,13 +34,8 @@ export type StoreState = MediaSlice &
     setActiveFrame: (id: string | null) => void;
     removeFrame: (id: string) => void;
     reset: () => void;
-    exportJson: () => string;
   };
 
-/** Tolerance in seconds when checking whether a captured frame's timestamp
- *  collides with an existing frame. Half a 60fps interval is small enough to
- *  never merge legitimately distinct frames yet large enough to absorb the
- *  rounding noise from independent capture paths. */
 const TIMESTAMP_DEDUPE_EPS = 0.008;
 
 export const useStore = create<StoreState>()((set, get, store) => ({
@@ -77,15 +74,16 @@ export const useStore = create<StoreState>()((set, get, store) => ({
   setMedia: (media) => {
     const prev = get().media;
     if (prev?.url && prev.url !== media?.url) URL.revokeObjectURL(prev.url);
-    // Switching media wipes derived state.
-    get().frames.forEach((f) => URL.revokeObjectURL(f.url));
+    get().frames.forEach((f) => {
+      if (f.url.startsWith("blob:")) URL.revokeObjectURL(f.url);
+    });
     set({
       media,
       frames: [],
       activeFrameId: null,
       annotations: [],
+      classifications: [],
       selectedAnnotationId: null,
-      centerViewMode: media?.kind === "video" ? "video" : "frame",
     });
   },
 
@@ -94,55 +92,56 @@ export const useStore = create<StoreState>()((set, get, store) => ({
       activeFrameId: id,
       selectedAnnotationId: null,
       hoveredAnnotationId: null,
-      centerViewMode: id ? "frame" : get().centerViewMode,
     }),
 
   removeFrame: (id) => {
     const s = get();
     const target = s.frames.find((f) => f.id === id);
-    if (target) URL.revokeObjectURL(target.url);
+    if (target?.url.startsWith("blob:")) URL.revokeObjectURL(target.url);
     const frames = s.frames.filter((f) => f.id !== id);
-    const annotations = s.annotations.filter((a) => a.frameId !== id);
+    const annotations = s.annotations.filter((a) => a.imageId !== id);
+    const classifications = s.classifications.filter((c) => c.imageId !== id);
     const activeFrameId =
       s.activeFrameId === id ? (frames[0]?.id ?? null) : s.activeFrameId;
-    set({ frames, annotations, activeFrameId });
+    set({ frames, annotations, classifications, activeFrameId });
   },
 
   reset: () => {
     const s = get();
     if (s.media?.url) URL.revokeObjectURL(s.media.url);
-    s.frames.forEach((f) => URL.revokeObjectURL(f.url));
+    s.frames.forEach((f) => {
+      if (f.url.startsWith("blob:")) URL.revokeObjectURL(f.url);
+    });
     set({
       media: null,
       frames: [],
       activeFrameId: null,
       annotations: [],
+      classifications: [],
       selectedAnnotationId: null,
-      centerViewMode: "video",
+      hoveredAnnotationId: null,
       keepZoomOnFrameChange: false,
       interactionMode: "draw",
       exceptedFrameIds: {},
       unlabeledOnly: false,
       rangeFilterEnabled: true,
       frameRange: null,
+      taskType: "bbox",
+      classes: [],
+      activeClassId: null,
     });
-  },
-
-  exportJson: () => {
-    const { media, frames, classes, annotations } = get();
-    return exportJsonImpl({ media, frames, classes, annotations });
   },
 }));
 
 /**
  * Cross-slice selector: frames as currently sorted + filtered in the strip.
  * Lives in the composition root because it joins frames, annotations,
- * and exceptedFrameIds. Accepts a structural subset so callers can pass
- * `useStore.getState()` directly or memoize over the specific inputs.
+ * classifications, and exceptedFrameIds.
  */
 export function selectVisibleFrames(state: {
   frames: StoreState["frames"];
   annotations: StoreState["annotations"];
+  classifications: StoreState["classifications"];
   exceptedFrameIds: StoreState["exceptedFrameIds"];
   frameSortOrder: StoreState["frameSortOrder"];
   unlabeledOnly: StoreState["unlabeledOnly"];
@@ -152,6 +151,7 @@ export function selectVisibleFrames(state: {
   const {
     frames,
     annotations,
+    classifications,
     exceptedFrameIds,
     frameSortOrder,
     unlabeledOnly,
@@ -166,21 +166,29 @@ export function selectVisibleFrames(state: {
 
   if (!unlabeledOnly && !(rangeFilterEnabled && frameRange)) return sorted;
 
-  const counts = new Map<string, number>();
+  const annCounts = new Map<string, number>();
+  const clsCounts = new Map<string, number>();
   if (unlabeledOnly) {
     for (const a of annotations) {
-      counts.set(a.frameId, (counts.get(a.frameId) ?? 0) + 1);
+      annCounts.set(a.imageId, (annCounts.get(a.imageId) ?? 0) + 1);
+    }
+    for (const c of classifications) {
+      clsCounts.set(c.imageId, (clsCounts.get(c.imageId) ?? 0) + 1);
     }
   }
 
   return sorted.filter((f) => {
     if (unlabeledOnly) {
-      if ((counts.get(f.id) ?? 0) !== 0) return false;
+      const labeled =
+        (annCounts.get(f.id) ?? 0) > 0 || (clsCounts.get(f.id) ?? 0) > 0;
+      if (labeled) return false;
       if (exceptedFrameIds[f.id]) return false;
     }
     if (rangeFilterEnabled && frameRange) {
       if (typeof f.timestamp !== "number") return false;
-      if (f.timestamp < frameRange.start || f.timestamp > frameRange.end) return false;
+      if (f.timestamp < frameRange.start || f.timestamp > frameRange.end) {
+        return false;
+      }
     }
     return true;
   });

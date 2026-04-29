@@ -86,7 +86,7 @@ export async function frameFromImage(media: MediaSource): Promise<Frame> {
   if (!blob) throw new Error("failed to encode image frame");
   return {
     id: uid(),
-    mediaId: media.id,
+    resourceId: media.id,
     url: URL.createObjectURL(blob),
     width: img.naturalWidth,
     height: img.naturalHeight,
@@ -151,7 +151,7 @@ export async function extractFrames(
     if (!blob) continue;
     const frame: Frame = {
       id: uid(),
-      mediaId: media.id,
+      resourceId: media.id,
       url: URL.createObjectURL(blob),
       width: w,
       height: h,
@@ -267,7 +267,7 @@ export async function captureFrameFromVideoElement(
   const t = clamp(video.currentTime, 0, Math.max(0, (media.duration ?? Infinity) - 0.001));
   return {
     id: uid(),
-    mediaId: media.id,
+    resourceId: media.id,
     url: URL.createObjectURL(blob),
     width: w,
     height: h,

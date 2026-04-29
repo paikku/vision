@@ -4,13 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { selectVisibleFrames, useStore } from "@/lib/store";
 import type { FrameSortOrder } from "../slice";
 
-// Virtualization constants. Item height is measured at runtime from the first
-// rendered row so we adapt to any layout tweaks — these are only the initial
-// estimate and the overscan buffer.
 const DEFAULT_ITEM_HEIGHT = 200;
 const OVERSCAN = 4;
-const ITEM_GAP = 8; // matches the old space-y-2 gap between rows
-const LIST_PADDING = 12; // matches p-3 on the scroll container
+const ITEM_GAP = 8;
+const LIST_PADDING = 12;
 
 export function FrameStrip() {
   const frames = useStore((s) => s.frames);
@@ -18,7 +15,9 @@ export function FrameStrip() {
   const setActiveFrame = useStore((s) => s.setActiveFrame);
   const removeFrame = useStore((s) => s.removeFrame);
   const annotations = useStore((s) => s.annotations);
+  const classifications = useStore((s) => s.classifications);
   const classes = useStore((s) => s.classes);
+  const taskType = useStore((s) => s.taskType);
   const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
   const toggleFrameException = useStore((s) => s.toggleFrameException);
   const sort = useStore((s) => s.frameSortOrder);
@@ -35,8 +34,6 @@ export function FrameStrip() {
   const [itemHeight, setItemHeight] = useState(DEFAULT_ITEM_HEIGHT);
   const scrollRafRef = useRef<number | null>(null);
 
-  // Coalesce scroll updates to one per frame — firing setState on every
-  // pixel of wheel scroll is what makes long strips feel sticky.
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     if (scrollRafRef.current !== null) return;
@@ -54,65 +51,72 @@ export function FrameStrip() {
     };
   }, []);
 
-  // annotation count per frame
+  // Per-image label count: shape annotations + classifications.
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     for (const a of annotations) {
-      map.set(a.frameId, (map.get(a.frameId) ?? 0) + 1);
+      map.set(a.imageId, (map.get(a.imageId) ?? 0) + 1);
+    }
+    for (const c of classifications) {
+      map.set(c.imageId, (map.get(c.imageId) ?? 0) + 1);
     }
     return map;
-  }, [annotations]);
+  }, [annotations, classifications]);
 
-  // class breakdown per frame: { classId → count }
+  // Per-image class breakdown (combines annotations + classifications).
   const classCounts = useMemo(() => {
     const map = new Map<string, Map<string, number>>();
-    for (const a of annotations) {
-      let inner = map.get(a.frameId);
-      if (!inner) { inner = new Map(); map.set(a.frameId, inner); }
-      inner.set(a.classId, (inner.get(a.classId) ?? 0) + 1);
-    }
+    const bump = (imageId: string, classId: string) => {
+      let inner = map.get(imageId);
+      if (!inner) {
+        inner = new Map();
+        map.set(imageId, inner);
+      }
+      inner.set(classId, (inner.get(classId) ?? 0) + 1);
+    };
+    for (const a of annotations) bump(a.imageId, a.classId);
+    for (const c of classifications) bump(c.imageId, c.classId);
     return map;
-  }, [annotations]);
+  }, [annotations, classifications]);
 
-  // Precompute original insertion index per frame id. `frames.indexOf(f)` in
-  // the render loop is O(n²) when the strip holds thousands of frames.
   const originalIndex = useMemo(() => {
     const map = new Map<string, number>();
     frames.forEach((f, i) => map.set(f.id, i));
     return map;
   }, [frames]);
 
-  // Class lookup by id — same reason: avoid per-row linear scans.
   const classById = useMemo(() => {
     const map = new Map<string, (typeof classes)[number]>();
     for (const c of classes) map.set(c.id, c);
     return map;
   }, [classes]);
 
-  // Visible list mirrors what `useKeyboardShortcuts` uses for 1/2 nav, so
-  // keyboard stepping and the strip always agree on the current slice.
-  // Compute via useMemo rather than a zustand selector because the selector
-  // returns a new array each call, which would thrash referential equality.
   const filtered = useMemo(
     () =>
       selectVisibleFrames({
         frames,
         annotations,
+        classifications,
         exceptedFrameIds,
         frameSortOrder: sort,
         unlabeledOnly,
         rangeFilterEnabled,
         frameRange,
       }),
-    [frames, annotations, exceptedFrameIds, sort, unlabeledOnly, rangeFilterEnabled, frameRange],
+    [
+      frames,
+      annotations,
+      classifications,
+      exceptedFrameIds,
+      sort,
+      unlabeledOnly,
+      rangeFilterEnabled,
+      frameRange,
+    ],
   );
 
-  // Total scrollable height for all items. The last item doesn't need a
-  // trailing gap, so one `itemHeight` unit already over-counts by the gap.
-  // That's fine — it just leaves a tiny bit of dead space at the bottom.
   const totalHeight = filtered.length * itemHeight;
 
-  // Track viewport size so the visible range stays correct on resize.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -123,8 +127,6 @@ export function FrameStrip() {
     return () => ro.disconnect();
   }, []);
 
-  // Measure actual row stride (item height + gap) from the first rendered
-  // row. We pass this callback via ref on the first visible item below.
   const measureItem = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     const h = node.getBoundingClientRect().height + ITEM_GAP;
@@ -144,9 +146,6 @@ export function FrameStrip() {
   );
   const visibleSlice = filtered.slice(startIdx, endIdx);
 
-  // Scroll active frame into view when selection changes. With virtualization
-  // the item may not be in the DOM, so compute the target scrollTop from the
-  // active frame's index in `filtered`.
   useEffect(() => {
     const el = scrollRef.current;
     if (!activeFrameId || !el) return;
@@ -169,14 +168,17 @@ export function FrameStrip() {
   if (frames.length === 0) {
     return (
       <div className="px-3 py-6 text-center text-xs text-[var(--color-muted)]">
-        Capture frames to start labeling.
+        {taskType === "classify"
+          ? "이 라벨셋에 이미지가 없습니다."
+          : "Capture frames to start labeling."}
       </div>
     );
   }
 
+  const showRangeButton = !!frameRange;
+
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      {/* Sort + filter controls */}
       <div className="flex shrink-0 flex-col gap-1 border-b border-[var(--color-line)] px-2 py-1.5">
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-[var(--color-muted)] w-8 shrink-0">정렬</span>
@@ -210,20 +212,20 @@ export function FrameStrip() {
           >
             미라벨
           </button>
-          <button
-            type="button"
-            onClick={() => setRangeFilterEnabled(!rangeFilterEnabled)}
-            disabled={!frameRange}
-            title={frameRange ? "타임라인 범위 내 프레임만 표시" : "타임라인에서 범위를 먼저 설정하세요"}
-            className={[
-              "rounded px-2 py-0.5 text-[10px] transition disabled:opacity-40",
-              rangeFilterEnabled && frameRange
-                ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
-            ].join(" ")}
-          >
-            범위
-          </button>
+          {showRangeButton && (
+            <button
+              type="button"
+              onClick={() => setRangeFilterEnabled(!rangeFilterEnabled)}
+              className={[
+                "rounded px-2 py-0.5 text-[10px] transition",
+                rangeFilterEnabled
+                  ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                  : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
+              ].join(" ")}
+            >
+              범위
+            </button>
+          )}
         </div>
       </div>
 
@@ -234,7 +236,7 @@ export function FrameStrip() {
       >
         {filtered.length === 0 ? (
           <p className="py-4 text-center text-xs text-[var(--color-muted)]">
-            {unlabeledOnly || rangeFilterEnabled ? "조건에 맞는 프레임 없음" : "프레임 없음"}
+            {unlabeledOnly || rangeFilterEnabled ? "조건에 맞는 항목 없음" : "프레임 없음"}
           </p>
         ) : (
           <div
@@ -284,7 +286,6 @@ export function FrameStrip() {
                       className="aspect-video w-full bg-black object-contain"
                     />
 
-                    {/* Footer: index + label + annotation count */}
                     <div className="flex items-center justify-between bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-muted)]">
                       <span className="tabular-nums truncate">
                         #{String(originalIdx + 1).padStart(2, "0")} · {f.label}
@@ -294,7 +295,6 @@ export function FrameStrip() {
                       </span>
                     </div>
 
-                    {/* Class breakdown badges or except indicator (bottom-left, same row) */}
                     <div className="flex flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1 min-h-[18px]">
                       {count === 0 ? (
                         <span
@@ -330,15 +330,16 @@ export function FrameStrip() {
                       )}
                     </div>
 
-                    {/* Remove button */}
-                    <span
-                      role="button"
-                      aria-label="Remove frame"
-                      onClick={(e) => { e.stopPropagation(); removeFrame(f.id); }}
-                      className="absolute right-1 top-1 hidden h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/60 text-xs text-white group-hover:flex"
-                    >
-                      ×
-                    </span>
+                    {f.url.startsWith("blob:") ? null : (
+                      <span
+                        role="button"
+                        aria-label="Remove frame"
+                        onClick={(e) => { e.stopPropagation(); removeFrame(f.id); }}
+                        className="absolute right-1 top-1 hidden h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/60 text-xs text-white group-hover:flex"
+                      >
+                        ×
+                      </span>
+                    )}
                   </button>
                 </div>
               );

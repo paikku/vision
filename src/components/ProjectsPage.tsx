@@ -122,7 +122,7 @@ export function ProjectsPage() {
                   </button>
                 </div>
                 <div className="text-[11px] text-[var(--color-muted)]">
-                  {p.videoCount} videos · {p.frameCount} frames · {p.annotationCount} labels
+                  {p.resourceCount} resources · {p.imageCount} images · {p.labelSetCount} label sets
                 </div>
                 <div className="text-[10px] text-[var(--color-muted)]">
                   {new Date(p.createdAt).toLocaleString()}

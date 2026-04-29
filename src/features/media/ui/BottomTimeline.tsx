@@ -51,6 +51,7 @@ export function BottomTimeline({
 }: BottomTimelineProps) {
   const frames = useStore((s) => s.frames);
   const annotations = useStore((s) => s.annotations);
+  const classifications = useStore((s) => s.classifications);
   const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
   const frameSortOrder = useStore((s) => s.frameSortOrder);
   const unlabeledOnly = useStore((s) => s.unlabeledOnly);
@@ -80,6 +81,7 @@ export function BottomTimeline({
     for (const f of selectVisibleFrames({
       frames,
       annotations,
+      classifications,
       exceptedFrameIds,
       frameSortOrder,
       unlabeledOnly,
@@ -92,6 +94,7 @@ export function BottomTimeline({
   }, [
     frames,
     annotations,
+    classifications,
     exceptedFrameIds,
     frameSortOrder,
     unlabeledOnly,

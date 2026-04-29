@@ -3,8 +3,7 @@ import type { Frame } from "./types";
 
 export type FrameSortOrder = "added" | "time";
 
-/** Inclusive [start, end] range in seconds, used by the range filter and
- * the timeline's range-extraction track. */
+/** Inclusive [start, end] range in seconds. Used by extraction tooling. */
 export type FrameRange = { start: number; end: number };
 
 export type FramesSlice = {
@@ -13,12 +12,13 @@ export type FramesSlice = {
   keepZoomOnFrameChange: boolean;
   exceptedFrameIds: Record<string, boolean>;
   frameSortOrder: FrameSortOrder;
-  /** Independent toggle: when true, hide frames that already have annotations. */
+  /** Hide frames that already have annotations / classifications. */
   unlabeledOnly: boolean;
-  /** Independent toggle: when true, hide frames whose timestamp is outside `frameRange`. */
+  /** Hide frames whose timestamp is outside `frameRange`. */
   rangeFilterEnabled: boolean;
-  /** Range, in seconds, used by both the range filter and the extraction tools. */
+  /** Time range, in seconds, used by extraction tooling. */
   frameRange: FrameRange | null;
+
   addFrames: (frames: Frame[]) => void;
   setKeepZoomOnFrameChange: (keep: boolean) => void;
   toggleFrameException: (id: string) => void;

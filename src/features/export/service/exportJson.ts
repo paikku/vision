@@ -1,30 +1,29 @@
-import type { Annotation, LabelClass } from "@/features/annotations/types";
+import type {
+  Annotation,
+  Classification,
+  LabelClass,
+  TaskType,
+} from "@/features/annotations/types";
 import type { Frame } from "@/features/frames/types";
-import type { MediaSource } from "@/features/media/types";
 
 export type ExportSnapshot = {
-  media: MediaSource | null;
+  labelsetId: string;
+  labelsetName: string;
+  taskType: TaskType;
   frames: Frame[];
   classes: LabelClass[];
   annotations: Annotation[];
+  classifications: Classification[];
 };
 
 export function exportJson(snapshot: ExportSnapshot): string {
-  const { media, frames, classes, annotations } = snapshot;
+  const { labelsetId, labelsetName, taskType, frames, classes, annotations, classifications } =
+    snapshot;
   const payload = {
-    version: 1,
-    media: media
-      ? {
-          id: media.id,
-          kind: media.kind,
-          name: media.name,
-          width: media.width,
-          height: media.height,
-          duration: media.duration,
-        }
-      : null,
+    version: 2,
+    labelset: { id: labelsetId, name: labelsetName, taskType },
     classes,
-    frames: frames.map((f) => ({
+    images: frames.map((f) => ({
       id: f.id,
       width: f.width,
       height: f.height,
@@ -32,6 +31,7 @@ export function exportJson(snapshot: ExportSnapshot): string {
       label: f.label,
     })),
     annotations,
+    classifications,
   };
   return JSON.stringify(payload, null, 2);
 }

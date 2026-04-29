@@ -33,12 +33,39 @@ export type PolygonShape = {
 
 export type Shape = RectShape | PolygonShape;
 
+/**
+ * Shape annotation — used by `bbox` and `polygon` task types. Each annotation
+ * binds a shape and class to one image.
+ */
 export type Annotation = {
   id: string;
-  frameId: string;
+  imageId: string;
   classId: string;
   shape: Shape;
   createdAt: number;
 };
 
+/**
+ * Image-level class assignment — used by `classify` task type. An image may
+ * have multiple classifications (multi-label) but at most one per class.
+ */
+export type Classification = {
+  id: string;
+  imageId: string;
+  classId: string;
+  createdAt: number;
+};
+
 export type ToolId = "rect" | "polygon" | "mask";
+
+export type TaskType = "bbox" | "polygon" | "classify";
+
+export const TASK_TYPES: ReadonlyArray<{
+  id: TaskType;
+  label: string;
+  description: string;
+}> = [
+  { id: "bbox", label: "Bounding Box", description: "사각형으로 객체 영역 라벨" },
+  { id: "polygon", label: "Polygon", description: "다각형으로 객체 영역 라벨" },
+  { id: "classify", label: "Classification", description: "이미지 단위 클래스 분류" },
+];

@@ -2,7 +2,6 @@
 
 import {
   type PointerEvent as ReactPointerEvent,
-  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -25,7 +24,9 @@ export function AnnotationStage() {
   const frame = useStore((s) =>
     s.frames.find((f) => f.id === s.activeFrameId) ?? null,
   );
+  const taskType = useStore((s) => s.taskType);
   const annotations = useStore((s) => s.annotations);
+  const classifications = useStore((s) => s.classifications);
   const classes = useStore((s) => s.classes);
   const activeClassId = useStore((s) => s.activeClassId);
   const activeToolId = useStore((s) => s.activeToolId);
@@ -40,17 +41,19 @@ export function AnnotationStage() {
   const keepZoomOnFrameChange = useStore((s) => s.keepZoomOnFrameChange);
   const setKeepZoomOnFrameChange = useStore((s) => s.setKeepZoomOnFrameChange);
   const segmentingIds = useStore((s) => s.segmentingIds);
+  const toggleClassification = useStore((s) => s.toggleClassification);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [fitState, setFitState] = useState<FitRect | null>(null);
-  const [hoveredHandleAnnotationId, setHoveredHandleAnnotationId] = useState<string | null>(null);
+  const [, setHoveredHandleAnnotationId] = useState<string | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [showRectLabels, setShowRectLabels] = useState(true);
   const [showCursorLabel, setShowCursorLabel] = useState(true);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Contain-fit layout, recomputed on resize.
+  const isClassify = taskType === "classify";
+
   useLayoutEffect(() => {
     const recompute = () => {
       const c = containerRef.current;
@@ -90,9 +93,10 @@ export function AnnotationStage() {
     activeClassId,
     activeToolId,
     interactionMode,
+    disabled: isClassify,
     onBeginDraw: () => selectAnnotation(null),
-    onCommit: (frameId, classId, shape) =>
-      addAnnotation({ frameId, classId, shape }),
+    onCommit: (imageId, classId, shape) =>
+      addAnnotation({ imageId, classId, shape }),
   });
 
   const dragRef = useRef<
@@ -137,12 +141,16 @@ export function AnnotationStage() {
   if (!frame) {
     return (
       <div className="grid h-full place-items-center text-sm text-[var(--color-muted)]">
-        Select or capture a frame to begin labeling.
+        Select an image to begin labeling.
       </div>
     );
   }
 
-  const frameAnnotations = annotations.filter((a) => a.frameId === frame.id);
+  const frameAnnotations = annotations.filter((a) => a.imageId === frame.id);
+  const frameClassifications = classifications.filter(
+    (c) => c.imageId === frame.id,
+  );
+  const classifiedClassIds = new Set(frameClassifications.map((c) => c.classId));
   const { zoom, px, py } = transform;
   const tool = TOOLS[activeToolId];
   const isEditMode = interactionMode === "edit";
@@ -195,14 +203,12 @@ export function AnnotationStage() {
     if (drag.mode === "resize-rect") {
       const s = drag.startShape;
       if (drag.corner === "br") {
-        // Top-left fixed; bottom-right follows cursor.
         const w = Math.max(RECT_MIN_SIZE, Math.min(1 - s.x, s.w + dx));
         const h = Math.max(RECT_MIN_SIZE, Math.min(1 - s.y, s.h + dy));
         updateAnnotation(active.id, {
           shape: { kind: "rect", x: s.x, y: s.y, w, h },
         });
       } else {
-        // Bottom-right fixed; top-left follows cursor.
         const brX = s.x + s.w;
         const brY = s.y + s.h;
         const nx = Math.max(0, Math.min(brX - RECT_MIN_SIZE, s.x + dx));
@@ -264,27 +270,43 @@ export function AnnotationStage() {
             top: fitState.top,
             width: fitState.width,
             height: fitState.height,
-            cursor: interactionMode === "draw" ? cursor : isPanning ? "grabbing" : "grab",
+            cursor: isClassify
+              ? "default"
+              : interactionMode === "draw"
+                ? cursor
+                : isPanning
+                  ? "grabbing"
+                  : "grab",
             transformOrigin: "0 0",
             transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
           onPointerDown={
-            interactionMode === "draw"
-              ? handlers.onPointerDown
-              : onEditStagePointerDown
+            isClassify
+              ? undefined
+              : interactionMode === "draw"
+                ? handlers.onPointerDown
+                : onEditStagePointerDown
           }
           onPointerMove={
-            interactionMode === "draw"
-              ? handlers.onPointerMove
-              : onEditStagePointerMove
+            isClassify
+              ? undefined
+              : interactionMode === "draw"
+                ? handlers.onPointerMove
+                : onEditStagePointerMove
           }
           onPointerUp={
-            interactionMode === "draw" ? handlers.onPointerUp : onEditStagePointerUp
+            isClassify
+              ? undefined
+              : interactionMode === "draw"
+                ? handlers.onPointerUp
+                : onEditStagePointerUp
           }
           onPointerCancel={
-            interactionMode === "draw"
-              ? handlers.onPointerCancel
-              : onEditStagePointerUp
+            isClassify
+              ? undefined
+              : interactionMode === "draw"
+                ? handlers.onPointerCancel
+                : onEditStagePointerUp
           }
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -294,78 +316,77 @@ export function AnnotationStage() {
             draggable={false}
             className="absolute inset-0 h-full w-full object-fill"
           />
-          <svg
-            className="absolute inset-0 h-full w-full"
-            viewBox="0 0 1 1"
-            preserveAspectRatio="none"
-            onPointerMove={(e) => {
-              if (!stageRef.current) return;
-              const b = stageRef.current.getBoundingClientRect();
-              const mx = (e.clientX - b.left) / b.width;
-              const my = (e.clientY - b.top) / b.height;
-              const hits = frameAnnotations.filter((a) =>
-                shapeContains(a.shape, mx, my),
-              );
-              if (hits.length === 0) { setHoveredAnnotation(null); return; }
-              const closest = hits.reduce((best, cur) => {
-                const bb = shapeAabb(best.shape);
-                const cb = shapeAabb(cur.shape);
-                const bd = Math.hypot(mx - (bb.x + bb.w / 2), my - (bb.y + bb.h / 2));
-                const cd = Math.hypot(mx - (cb.x + cb.w / 2), my - (cb.y + cb.h / 2));
-                return cd < bd ? cur : best;
-              });
-              setHoveredAnnotation(closest.id);
-            }}
-            onPointerLeave={() => setHoveredAnnotation(null)}
-          >
-            {frameAnnotations.map((a) => {
-              const klass = classes.find((c) => c.id === a.classId);
-              if (!klass) return null;
-              return (
+          {!isClassify && (
+            <svg
+              className="absolute inset-0 h-full w-full"
+              viewBox="0 0 1 1"
+              preserveAspectRatio="none"
+              onPointerMove={(e) => {
+                if (!stageRef.current) return;
+                const b = stageRef.current.getBoundingClientRect();
+                const mx = (e.clientX - b.left) / b.width;
+                const my = (e.clientY - b.top) / b.height;
+                const hits = frameAnnotations.filter((a) =>
+                  shapeContains(a.shape, mx, my),
+                );
+                if (hits.length === 0) { setHoveredAnnotation(null); return; }
+                const closest = hits.reduce((best, cur) => {
+                  const bb = shapeAabb(best.shape);
+                  const cb = shapeAabb(cur.shape);
+                  const bd = Math.hypot(mx - (bb.x + bb.w / 2), my - (bb.y + bb.h / 2));
+                  const cd = Math.hypot(mx - (cb.x + cb.w / 2), my - (cb.y + cb.h / 2));
+                  return cd < bd ? cur : best;
+                });
+                setHoveredAnnotation(closest.id);
+              }}
+              onPointerLeave={() => setHoveredAnnotation(null)}
+            >
+              {frameAnnotations.map((a) => {
+                const klass = classes.find((c) => c.id === a.classId);
+                if (!klass) return null;
+                return (
+                  <ShapeView
+                    key={a.id}
+                    shape={a.shape}
+                    klass={klass}
+                    selected={a.id === selectedAnnotationId}
+                    hovered={a.id === hoveredAnnotationId}
+                    zoom={zoom}
+                    onSelect={isEditMode ? (e) => {
+                      e.stopPropagation();
+                      selectAnnotation(a.id);
+                    } : undefined}
+                    onStartMove={isEditMode ? (e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      selectAnnotation(a.id);
+                      dragRef.current = {
+                        mode: "move",
+                        annotationId: a.id,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        hasMoved: false,
+                        startShape: a.shape,
+                      };
+                      stageRef.current?.setPointerCapture(e.pointerId);
+                    } : undefined}
+                  />
+                );
+              })}
+              {draftShape && (
                 <ShapeView
-                  key={a.id}
-                  shape={a.shape}
-                  klass={klass}
-                  selected={a.id === selectedAnnotationId}
-                  hovered={a.id === hoveredAnnotationId}
+                  shape={draftShape}
+                  klass={
+                    classes.find((c) => c.id === activeClassId) ?? classes[0]
+                  }
                   zoom={zoom}
-                  onSelect={isEditMode ? (e) => {
-                    e.stopPropagation();
-                    selectAnnotation(a.id);
-                  } : undefined}
-                  onStartMove={isEditMode ? (e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    selectAnnotation(a.id);
-                    dragRef.current = {
-                      mode: "move",
-                      annotationId: a.id,
-                      startClientX: e.clientX,
-                      startClientY: e.clientY,
-                      hasMoved: false,
-                      startShape: a.shape,
-                    };
-                    stageRef.current?.setPointerCapture(e.pointerId);
-                  } : undefined}
+                  draft
                 />
-              );
-            })}
-            {draftShape && (
-              <ShapeView
-                shape={draftShape}
-                klass={
-                  classes.find((c) => c.id === activeClassId) ?? classes[0]
-                }
-                zoom={zoom}
-                draft
-              />
-            )}
-          </svg>
+              )}
+            </svg>
+          )}
 
-          {/* Edit-mode resize/vertex handles — rendered as HTML so they're
-              always circular (the SVG above uses preserveAspectRatio="none"
-              which distorts <circle>) and get native cursor feedback. */}
-          {isEditMode && selectedAnnotationId && (() => {
+          {!isClassify && isEditMode && selectedAnnotationId && (() => {
             const a = frameAnnotations.find((x) => x.id === selectedAnnotationId);
             if (!a) return null;
             const klass = classes.find((c) => c.id === a.classId);
@@ -431,11 +452,7 @@ export function AnnotationStage() {
             return null;
           })()}
 
-          {/* Draft polygon vertex dots — non-interactive, also HTML to
-              stay circular. The first vertex is enlarged + filled once
-              the ring is closable (≥3 points) so the snap-close target
-              is visible. */}
-          {draftShape?.kind === "polygon" && (() => {
+          {!isClassify && draftShape?.kind === "polygon" && (() => {
             const cls = classes.find((c) => c.id === activeClassId) ?? classes[0];
             if (!cls) return null;
             const ring = draftShape.rings[0] ?? [];
@@ -457,10 +474,7 @@ export function AnnotationStage() {
             });
           })()}
 
-          {/* Per-annotation segmentation loading overlay. Centered on each
-              shape's AABB while a segment request is in flight. Counter-
-              scaled so the spinner stays the same visual size at any zoom. */}
-          {frameAnnotations.map((a) => {
+          {!isClassify && frameAnnotations.map((a) => {
             if (!segmentingIds[a.id]) return null;
             const klass = classes.find((c) => c.id === a.classId);
             const b = shapeAabb(a.shape);
@@ -474,10 +488,7 @@ export function AnnotationStage() {
             );
           })}
 
-          {/* Label overlays — outside AABB, top-right corner, no background.
-              transform: scale(1/zoom) counteracts the parent stageRef scale so the
-              label stays at a fixed pixel size regardless of zoom level. */}
-          {showRectLabels && frameAnnotations.map((a) => {
+          {!isClassify && showRectLabels && frameAnnotations.map((a) => {
             const klass = classes.find((c) => c.id === a.classId);
             if (!klass) return null;
             const b = shapeAabb(a.shape);
@@ -503,8 +514,41 @@ export function AnnotationStage() {
         </div>
       )}
 
-      {/* Cursor label — fixed so it's unaffected by stageRef transform */}
-      {showCursorLabel && interactionMode !== "edit" && cursorPos && (() => {
+      {/* Classify mode: assigned-classes badge bar */}
+      {isClassify && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap gap-1 p-3">
+          {frameClassifications.map((c) => {
+            const klass = classes.find((k) => k.id === c.classId);
+            if (!klass) return null;
+            return (
+              <span
+                key={c.id}
+                className="pointer-events-auto flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-white shadow"
+                style={{ background: klass.color }}
+              >
+                <span className="h-2 w-2 rounded-full bg-white/60" />
+                {klass.name}
+                <button
+                  type="button"
+                  onClick={() => toggleClassification(frame.id, c.classId)}
+                  className="ml-1 opacity-70 hover:opacity-100"
+                  aria-label={`${klass.name} 해제`}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+          {frameClassifications.length === 0 && (
+            <span className="rounded bg-black/60 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
+              아직 부여된 클래스 없음 · 우측 패널 또는 단축키로 클래스 할당
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Cursor label — fixed so it's unaffected by stageRef transform. Hidden in classify mode. */}
+      {!isClassify && showCursorLabel && interactionMode !== "edit" && cursorPos && (() => {
         const cls = classes.find((c) => c.id === activeClassId);
         if (!cls) return null;
         return (
@@ -517,7 +561,7 @@ export function AnnotationStage() {
         );
       })()}
 
-      {/* Zoom controls — double-click stage to reset */}
+      {/* Zoom controls */}
       <div className="absolute right-3 top-3 flex items-center gap-1 rounded-md bg-black/60 p-1 text-xs text-white backdrop-blur">
         <button
           type="button"
@@ -555,36 +599,45 @@ export function AnnotationStage() {
           />
           zoom 유지
         </label>
-        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
-          <input
-            type="checkbox"
-            checked={interactionMode === "edit"}
-            onChange={(e) => setInteractionMode(e.target.checked ? "edit" : "draw")}
-          />
-          edit (C)
-        </label>
-        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
-          <input
-            type="checkbox"
-            checked={showRectLabels}
-            onChange={(e) => setShowRectLabels(e.target.checked)}
-          />
-          라벨
-        </label>
-        <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
-          <input
-            type="checkbox"
-            checked={showCursorLabel}
-            onChange={(e) => setShowCursorLabel(e.target.checked)}
-          />
-          커서라벨
-        </label>
+        {!isClassify && (
+          <>
+            <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+              <input
+                type="checkbox"
+                checked={interactionMode === "edit"}
+                onChange={(e) => setInteractionMode(e.target.checked ? "edit" : "draw")}
+              />
+              edit (C)
+            </label>
+            <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+              <input
+                type="checkbox"
+                checked={showRectLabels}
+                onChange={(e) => setShowRectLabels(e.target.checked)}
+              />
+              라벨
+            </label>
+            <label className="ml-1 flex items-center gap-1 rounded px-2 py-1 hover:bg-white/10">
+              <input
+                type="checkbox"
+                checked={showCursorLabel}
+                onChange={(e) => setShowCursorLabel(e.target.checked)}
+              />
+              커서라벨
+            </label>
+          </>
+        )}
       </div>
 
       {/* Footer status */}
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-black/55 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
-        {frame.width}×{frame.height} · {frameAnnotations.length} labels ·{" "}
-        {interactionMode === "draw" ? tool.name.toLowerCase() : "edit"} · scroll to zoom · dblclick to fit
+        {frame.width}×{frame.height} ·{" "}
+        {isClassify
+          ? `${classifiedClassIds.size} classes · classify`
+          : `${frameAnnotations.length} labels · ${
+              interactionMode === "draw" ? tool.name.toLowerCase() : "edit"
+            }`}{" "}
+        · scroll to zoom · dblclick to fit
       </div>
     </div>
   );
@@ -620,9 +673,6 @@ function ShapeView({
   if (shape.kind === "polygon") {
     const d = polygonPath(shape.rings, { closed: !draft });
     if (!d) return null;
-    // Handle and vertex-dot rendering live outside the SVG — see
-    // AnnotationStage for the HTML overlay. The SVG here only paints
-    // the shape body + an optional hover glow.
     return (
       <g
         data-annotation-interactive="true"
@@ -680,7 +730,6 @@ function ShapeView({
           vectorEffect="non-scaling-stroke"
           style={{ cursor: onStartMove ? "move" : onSelect ? "pointer" : undefined }}
         />
-        {/* Outer glow ring when hovered from the panel */}
         {hovered && !selected && !draft && (
           <rect
             x={shape.x}
@@ -701,13 +750,6 @@ function ShapeView({
   return null;
 }
 
-/**
- * Interactive edit-mode handle. Rendered as HTML so it's always a
- * perfect circle at any frame aspect ratio and supports native cursor
- * feedback (resize / grab). Positioned at normalized (x, y) within the
- * stageRef's aspect-fitted container; counter-scaled by 1/zoom so the
- * visual size stays constant across zoom levels.
- */
 function Handle({
   x,
   y,
@@ -722,7 +764,7 @@ function Handle({
   onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const visualZoom = Math.max(0.25, zoom);
-  const SIZE = 10; // visual px at zoom=1
+  const SIZE = 10;
   return (
     <div
       data-annotation-interactive="true"
@@ -746,13 +788,6 @@ function Handle({
   );
 }
 
-/**
- * Loading indicator shown over an annotation while its segment request is
- * in flight. Positioned at the AABB center inside the stageRef and
- * counter-scaled by 1/zoom so the spinner stays a fixed visual size.
- * The spinner is rendered as an inline SVG so no extra asset file is
- * needed and it inherits the class color for a per-label cue.
- */
 function SegmentLoadingOverlay({
   aabb,
   color,
@@ -810,7 +845,6 @@ function SegmentLoadingOverlay({
   );
 }
 
-/** Non-interactive point marker (polygon draft vertices). */
 function Dot({
   x,
   y,
@@ -843,15 +877,4 @@ function Dot({
       }}
     />
   );
-}
-
-// Retained for possible future use
-function _getContrastingHandleColor(hexColor: string) {
-  const hex = hexColor.replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return "#ffffff";
-  const r = Number.parseInt(hex.slice(0, 2), 16);
-  const g = Number.parseInt(hex.slice(2, 4), 16);
-  const b = Number.parseInt(hex.slice(4, 6), 16);
-  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-  return luminance > 150 ? "#111111" : "#ffffff";
 }

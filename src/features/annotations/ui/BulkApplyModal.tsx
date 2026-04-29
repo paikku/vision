@@ -3,18 +3,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Frame } from "@/features/frames/types";
 import { selectVisibleFrames, useStore } from "@/lib/store";
-import type { Annotation, LabelClass } from "../types";
+import type { Annotation, Classification, LabelClass } from "../types";
 
-type ContextMenu = { frameId: string; x: number; y: number };
+type ContextMenu = { imageId: string; x: number; y: number };
 
 interface Props {
   annotation: Annotation;
   frames: Frame[];
   annotations: Annotation[];
+  classifications: Classification[];
   exceptedFrameIds: Record<string, boolean>;
   classes: LabelClass[];
-  /** Called with the list of frame IDs to apply to (annotation is copied). */
-  onApply: (frameIds: string[]) => void;
+  /** Called with the list of image IDs to apply to (annotation is copied). */
+  onApply: (imageIds: string[]) => void;
   onClose: () => void;
 }
 
@@ -22,13 +23,12 @@ export function BulkApplyModal({
   annotation,
   frames,
   annotations,
+  classifications,
   exceptedFrameIds,
   classes,
   onApply,
   onClose,
 }: Props) {
-  // Sort/filter mirror the FrameStrip so the modal preview matches what the user
-  // sees on the left. Changing them here updates the strip too.
   const sort = useStore((s) => s.frameSortOrder);
   const unlabeledOnly = useStore((s) => s.unlabeledOnly);
   const rangeFilterEnabled = useStore((s) => s.rangeFilterEnabled);
@@ -42,7 +42,6 @@ export function BulkApplyModal({
   const [ctxMenu, setCtxMenu] = useState<ContextMenu | null>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
 
-  // Close context menu on outside click
   useEffect(() => {
     if (!ctxMenu) return;
     const handler = () => setCtxMenu(null);
@@ -50,7 +49,6 @@ export function BulkApplyModal({
     return () => window.removeEventListener("pointerdown", handler);
   }, [ctxMenu]);
 
-  // Close modal on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
@@ -60,17 +58,16 @@ export function BulkApplyModal({
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     for (const a of annotations) {
-      map.set(a.frameId, (map.get(a.frameId) ?? 0) + 1);
+      map.set(a.imageId, (map.get(a.imageId) ?? 0) + 1);
     }
     return map;
   }, [annotations]);
 
-  // Per-frame class breakdown — same shape as FrameStrip so the summary UI matches.
   const classCounts = useMemo(() => {
     const map = new Map<string, Map<string, number>>();
     for (const a of annotations) {
-      let inner = map.get(a.frameId);
-      if (!inner) { inner = new Map(); map.set(a.frameId, inner); }
+      let inner = map.get(a.imageId);
+      if (!inner) { inner = new Map(); map.set(a.imageId, inner); }
       inner.set(a.classId, (inner.get(a.classId) ?? 0) + 1);
     }
     return map;
@@ -87,16 +84,25 @@ export function BulkApplyModal({
       selectVisibleFrames({
         frames,
         annotations,
+        classifications,
         exceptedFrameIds,
         frameSortOrder: sort,
         unlabeledOnly,
         rangeFilterEnabled,
         frameRange,
       }),
-    [frames, annotations, exceptedFrameIds, sort, unlabeledOnly, rangeFilterEnabled, frameRange],
+    [
+      frames,
+      annotations,
+      classifications,
+      exceptedFrameIds,
+      sort,
+      unlabeledOnly,
+      rangeFilterEnabled,
+      frameRange,
+    ],
   );
 
-  // Scroll the active frame into view on open / when it changes.
   const gridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!activeFrameId) return;
@@ -109,7 +115,8 @@ export function BulkApplyModal({
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
@@ -141,7 +148,6 @@ export function BulkApplyModal({
         className="relative z-10 flex max-h-[95vh] w-[1200px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] px-4 py-3">
           <div className="flex items-center gap-2">
             <span
@@ -164,7 +170,6 @@ export function BulkApplyModal({
           </button>
         </div>
 
-        {/* Controls */}
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-line)] px-4 py-2">
           <div className="flex items-center gap-1">
             <span className="text-[11px] text-[var(--color-muted)]">정렬</span>
@@ -205,10 +210,9 @@ export function BulkApplyModal({
           </div>
         </div>
 
-        {/* Thumbnail grid */}
         <div ref={gridRef} className="flex-1 overflow-y-auto p-4">
           {displayFrames.length === 0 ? (
-            <p className="py-8 text-center text-sm text-[var(--color-muted)]">표시할 프레임 없음</p>
+            <p className="py-8 text-center text-sm text-[var(--color-muted)]">표시할 항목 없음</p>
           ) : (
             <div className="grid grid-cols-3 gap-4 lg:grid-cols-4 xl:grid-cols-5">
               {displayFrames.map((f) => {
@@ -237,7 +241,7 @@ export function BulkApplyModal({
                     onContextMenu={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      setCtxMenu({ frameId: f.id, x: e.clientX, y: e.clientY });
+                      setCtxMenu({ imageId: f.id, x: e.clientX, y: e.clientY });
                     }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -246,7 +250,6 @@ export function BulkApplyModal({
                       alt={f.label}
                       className="aspect-video w-full bg-black object-contain"
                     />
-                    {/* Checkbox overlay */}
                     <div className="absolute left-1 top-1">
                       <div
                         className={[
@@ -259,7 +262,6 @@ export function BulkApplyModal({
                         {isSelected && "✓"}
                       </div>
                     </div>
-                    {/* Active frame badge */}
                     {isActive && (
                       <span
                         className="absolute right-1 top-1 rounded-full px-1.5 py-px text-[10px] font-semibold text-black shadow"
@@ -268,7 +270,6 @@ export function BulkApplyModal({
                         현재
                       </span>
                     )}
-                    {/* Footer: index + label + annotation count (matches FrameStrip) */}
                     <div className="flex items-center justify-between bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-muted)]">
                       <span className="tabular-nums truncate">
                         #{String(originalIdx + 1).padStart(2, "0")} · {f.label}
@@ -277,7 +278,6 @@ export function BulkApplyModal({
                         {count}
                       </span>
                     </div>
-                    {/* Class breakdown badges or excepted indicator */}
                     <div className="flex flex-wrap gap-1 bg-[var(--color-surface)] px-2 pb-1 min-h-[18px]">
                       {count === 0
                         ? excepted && (
@@ -309,10 +309,9 @@ export function BulkApplyModal({
           )}
         </div>
 
-        {/* Footer */}
         <div className="flex shrink-0 items-center justify-between border-t border-[var(--color-line)] px-4 py-3">
           <p className="text-xs text-[var(--color-muted)]">
-            우클릭: 기준 프레임 직전·직후 선택/해제
+            우클릭: 기준 이미지 직전·직후 선택/해제
           </p>
           <div className="flex gap-2">
             <button type="button" onClick={onClose}
@@ -325,13 +324,12 @@ export function BulkApplyModal({
               onClick={() => { onApply([...selected]); onClose(); }}
               className="rounded bg-[var(--color-accent)] px-4 py-1.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40"
             >
-              {selected.size}개 프레임에 적용
+              {selected.size}개 이미지에 적용
             </button>
           </div>
         </div>
       </div>
 
-      {/* Right-click context menu for before/after select */}
       {ctxMenu && (
         <div
           className="fixed z-50 overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] py-1 shadow-xl text-sm"
@@ -347,7 +345,7 @@ export function BulkApplyModal({
             <button
               key={label}
               type="button"
-              onClick={() => selectRelative(ctxMenu.frameId, dir, select)}
+              onClick={() => selectRelative(ctxMenu.imageId, dir, select)}
               className="block w-full px-4 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)]"
             >
               {label}

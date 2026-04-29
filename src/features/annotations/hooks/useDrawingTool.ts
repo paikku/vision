@@ -20,8 +20,10 @@ type DrawingToolOptions = {
   activeClassId: string | null;
   activeToolId: ToolId;
   interactionMode: "draw" | "edit";
+  /** Disable drawing entirely (e.g. classify task type). */
+  disabled?: boolean;
   onBeginDraw: () => void;
-  onCommit: (frameId: string, classId: string, shape: Shape) => void;
+  onCommit: (imageId: string, classId: string, shape: Shape) => void;
 };
 
 /**
@@ -40,16 +42,16 @@ export function useDrawingTool({
   activeClassId,
   activeToolId,
   interactionMode,
+  disabled,
   onBeginDraw,
   onCommit,
 }: DrawingToolOptions) {
   const draftRef = useRef<ShapeDraft | null>(null);
-  // "pending" = first click placed, waiting for next click(s)
   const phaseRef = useRef<"idle" | "pending">("idle");
   const [draftShape, setDraftShape] = useState<Shape | null>(null);
 
-  const optsRef = useRef({ frame, activeClassId, onBeginDraw, onCommit });
-  optsRef.current = { frame, activeClassId, onBeginDraw, onCommit };
+  const optsRef = useRef({ frame, activeClassId, onBeginDraw, onCommit, disabled });
+  optsRef.current = { frame, activeClassId, onBeginDraw, onCommit, disabled };
 
   const toNorm = useCallback((e: ReactPointerEvent | PointerEvent): Point => {
     const stage = stageRef.current;
@@ -69,7 +71,6 @@ export function useDrawingTool({
 
   const tool = TOOLS[activeToolId];
 
-  // Cancel on Escape, or close on Enter (if the tool supports it).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (phaseRef.current !== "pending") return;
@@ -90,16 +91,19 @@ export function useDrawingTool({
     return () => window.removeEventListener("keydown", handler, { capture: true });
   }, [cancelDraft]);
 
-  // Cancel pending draft when tool, frame, or interaction mode changes.
   useEffect(() => { cancelDraft(); }, [activeToolId, frame?.id, interactionMode, cancelDraft]);
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      const { frame: f, activeClassId: cid, onBeginDraw: begin, onCommit: commit } =
-        optsRef.current;
-      if (!f || !cid || tool.disabled) return;
+      const {
+        frame: f,
+        activeClassId: cid,
+        onBeginDraw: begin,
+        onCommit: commit,
+        disabled: dis,
+      } = optsRef.current;
+      if (dis || !f || !cid || tool.disabled) return;
 
-      // Right-click cancels a pending draft.
       if (e.button === 2) {
         cancelDraft();
         return;
@@ -108,7 +112,6 @@ export function useDrawingTool({
       e.preventDefault();
 
       if (phaseRef.current === "idle") {
-        // First click: anchor
         begin();
         const start = toNorm(e);
         draftRef.current = tool.begin(start);
@@ -117,7 +120,6 @@ export function useDrawingTool({
         return;
       }
 
-      // Subsequent click: let the tool decide
       if (!draftRef.current) { phaseRef.current = "idle"; return; }
       const p = toNorm(e);
       const { done, shape } = draftRef.current.addPoint(p);
@@ -141,12 +143,11 @@ export function useDrawingTool({
     [toNorm],
   );
 
-  // pointerUp is a no-op in click-to-click mode.
   const onPointerUp = useCallback(() => {}, []);
 
   return {
     draftShape,
-    cursor: tool.disabled ? "not-allowed" : tool.cursor,
+    cursor: disabled ? "default" : tool.disabled ? "not-allowed" : tool.cursor,
     handlers: {
       onPointerDown,
       onPointerMove,
