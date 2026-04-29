@@ -2,7 +2,10 @@ import type { StateCreator } from "zustand";
 import type { Frame } from "./types";
 
 export type FrameSortOrder = "added" | "time";
-export type FrameFilterMode = "all" | "unlabeled";
+
+/** Inclusive [start, end] range in seconds, used by the range filter and
+ * the timeline's range-extraction track. */
+export type FrameRange = { start: number; end: number };
 
 export type FramesSlice = {
   frames: Frame[];
@@ -10,12 +13,19 @@ export type FramesSlice = {
   keepZoomOnFrameChange: boolean;
   exceptedFrameIds: Record<string, boolean>;
   frameSortOrder: FrameSortOrder;
-  frameFilterMode: FrameFilterMode;
+  /** Independent toggle: when true, hide frames that already have annotations. */
+  unlabeledOnly: boolean;
+  /** Independent toggle: when true, hide frames whose timestamp is outside `frameRange`. */
+  rangeFilterEnabled: boolean;
+  /** Range, in seconds, used by both the range filter and the extraction tools. */
+  frameRange: FrameRange | null;
   addFrames: (frames: Frame[]) => void;
   setKeepZoomOnFrameChange: (keep: boolean) => void;
   toggleFrameException: (id: string) => void;
   setFrameSortOrder: (order: FrameSortOrder) => void;
-  setFrameFilterMode: (mode: FrameFilterMode) => void;
+  setUnlabeledOnly: (value: boolean) => void;
+  setRangeFilterEnabled: (value: boolean) => void;
+  setFrameRange: (range: FrameRange | null) => void;
 };
 
 export const createFramesSlice: StateCreator<FramesSlice, [], [], FramesSlice> = (
@@ -26,7 +36,9 @@ export const createFramesSlice: StateCreator<FramesSlice, [], [], FramesSlice> =
   keepZoomOnFrameChange: false,
   exceptedFrameIds: {},
   frameSortOrder: "added",
-  frameFilterMode: "all",
+  unlabeledOnly: false,
+  rangeFilterEnabled: true,
+  frameRange: null,
 
   addFrames: (frames) =>
     set((s) => ({
@@ -47,5 +59,7 @@ export const createFramesSlice: StateCreator<FramesSlice, [], [], FramesSlice> =
     })),
 
   setFrameSortOrder: (frameSortOrder) => set({ frameSortOrder }),
-  setFrameFilterMode: (frameFilterMode) => set({ frameFilterMode }),
+  setUnlabeledOnly: (unlabeledOnly) => set({ unlabeledOnly }),
+  setRangeFilterEnabled: (rangeFilterEnabled) => set({ rangeFilterEnabled }),
+  setFrameRange: (frameRange) => set({ frameRange }),
 });

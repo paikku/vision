@@ -30,9 +30,12 @@ export function BulkApplyModal({
   // Sort/filter mirror the FrameStrip so the modal preview matches what the user
   // sees on the left. Changing them here updates the strip too.
   const sort = useStore((s) => s.frameSortOrder);
-  const filter = useStore((s) => s.frameFilterMode);
+  const unlabeledOnly = useStore((s) => s.unlabeledOnly);
+  const rangeFilterEnabled = useStore((s) => s.rangeFilterEnabled);
+  const frameRange = useStore((s) => s.frameRange);
   const setSort = useStore((s) => s.setFrameSortOrder);
-  const setFilter = useStore((s) => s.setFrameFilterMode);
+  const setUnlabeledOnly = useStore((s) => s.setUnlabeledOnly);
+  const setRangeFilterEnabled = useStore((s) => s.setRangeFilterEnabled);
   const activeFrameId = useStore((s) => s.activeFrameId);
 
   const [selected, setSelected] = useState<Set<string>>(() => new Set(frames.map((f) => f.id)));
@@ -86,9 +89,11 @@ export function BulkApplyModal({
         annotations,
         exceptedFrameIds,
         frameSortOrder: sort,
-        frameFilterMode: filter,
+        unlabeledOnly,
+        rangeFilterEnabled,
+        frameRange,
       }),
-    [frames, annotations, exceptedFrameIds, sort, filter],
+    [frames, annotations, exceptedFrameIds, sort, unlabeledOnly, rangeFilterEnabled, frameRange],
   );
 
   // Scroll the active frame into view on open / when it changes.
@@ -172,12 +177,21 @@ export function BulkApplyModal({
           </div>
           <div className="flex items-center gap-1">
             <span className="text-[11px] text-[var(--color-muted)]">필터</span>
-            {(["all", "unlabeled"] as const).map((f) => (
-              <button key={f} type="button" onClick={() => setFilter(f)}
-                className={["rounded px-2 py-0.5 text-[11px] transition", filter === f ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"].join(" ")}>
-                {f === "all" ? "전체" : "미라벨"}
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={() => setUnlabeledOnly(!unlabeledOnly)}
+              className={["rounded px-2 py-0.5 text-[11px] transition", unlabeledOnly ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"].join(" ")}
+            >
+              미라벨
+            </button>
+            <button
+              type="button"
+              onClick={() => setRangeFilterEnabled(!rangeFilterEnabled)}
+              disabled={!frameRange}
+              className={["rounded px-2 py-0.5 text-[11px] transition disabled:opacity-40", rangeFilterEnabled && frameRange ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"].join(" ")}
+            >
+              범위
+            </button>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button type="button" onClick={() => setSelected(new Set(displayFrames.map((f) => f.id)))}

@@ -100,6 +100,13 @@ export type ExtractOptions = {
   /** Output JPEG quality 0..1. */
   quality?: number;
   onProgress?: (done: number, total: number) => void;
+  /** Emitted as soon as each frame is encoded so callers can stream them
+   *  into the store in real time. The same Frame is also included in the
+   *  resolved array. */
+  onFrame?: (frame: Frame) => void;
+  /** When aborted, the loop bails after the in-flight seek/encode and
+   *  returns whatever frames were already emitted via onFrame. */
+  signal?: AbortSignal;
 };
 
 /**
@@ -111,7 +118,7 @@ export async function extractFrames(
   opts: ExtractOptions,
 ): Promise<Frame[]> {
   if (media.kind !== "video") throw new Error("extractFrames expects a video");
-  const { times, quality = 0.92, onProgress } = opts;
+  const { times, quality = 0.92, onProgress, onFrame, signal } = opts;
   const video = document.createElement("video");
   video.src = media.url;
   video.muted = true;
@@ -131,15 +138,18 @@ export async function extractFrames(
 
   const frames: Frame[] = [];
   for (let i = 0; i < times.length; i++) {
+    if (signal?.aborted) break;
     const t = clamp(times[i], 0, (media.duration ?? video.duration) - 0.001);
     video.currentTime = t;
     await once(video, "seeked");
+    if (signal?.aborted) break;
     ctx.drawImage(video, 0, 0, w, h);
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/jpeg", quality),
     );
+    if (signal?.aborted) break;
     if (!blob) continue;
-    frames.push({
+    const frame: Frame = {
       id: uid(),
       mediaId: media.id,
       url: URL.createObjectURL(blob),
@@ -147,8 +157,10 @@ export async function extractFrames(
       height: h,
       timestamp: t,
       label: `${formatTime(t)}`,
-    });
+    };
+    frames.push(frame);
     onProgress?.(i + 1, times.length);
+    onFrame?.(frame);
   }
 
   video.removeAttribute("src");
@@ -262,6 +274,82 @@ export async function captureFrameFromVideoElement(
     timestamp: t,
     label: `${formatTime(t)}`,
   };
+}
+
+/**
+ * Estimate the playback fps of a loaded video element via
+ * `requestVideoFrameCallback`. Samples a handful of frames (driving a brief
+ * mute play→pause to keep the decoder producing) then returns the median
+ * inverse-mediaTime delta, snapped to a common standard rate within ±2%.
+ *
+ * Resolves to null when the API is unavailable or the sample times out.
+ */
+export async function estimateVideoFps(
+  video: HTMLVideoElement,
+  opts: { samples?: number; timeoutMs?: number } = {},
+): Promise<number | null> {
+  type RVFCMeta = { mediaTime: number };
+  type RVFC = (cb: (now: number, meta: RVFCMeta) => void) => number;
+  const rvfc = (video as unknown as { requestVideoFrameCallback?: RVFC })
+    .requestVideoFrameCallback;
+  if (typeof rvfc !== "function") return null;
+
+  const samples = opts.samples ?? 12;
+  const timeoutMs = opts.timeoutMs ?? 1500;
+
+  const wasPaused = video.paused;
+  const startTime = video.currentTime;
+  const times: number[] = [];
+
+  const collected = await new Promise<number[]>((resolve) => {
+    let done = false;
+    const finish = (out: number[]) => {
+      if (done) return;
+      done = true;
+      resolve(out);
+    };
+    const timer = window.setTimeout(() => finish(times.slice()), timeoutMs);
+
+    const tick = (_now: number, meta: RVFCMeta) => {
+      if (done) return;
+      times.push(meta.mediaTime);
+      if (times.length >= samples) {
+        window.clearTimeout(timer);
+        finish(times.slice());
+        return;
+      }
+      rvfc.call(video, tick);
+    };
+    rvfc.call(video, tick);
+    void video.play().catch(() => {});
+  });
+
+  if (!wasPaused) {
+    // Caller had it playing; leave it playing.
+  } else {
+    video.pause();
+    try {
+      video.currentTime = startTime;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (collected.length < 4) return null;
+  const deltas: number[] = [];
+  for (let i = 1; i < collected.length; i++) {
+    const d = collected[i] - collected[i - 1];
+    if (d > 0 && d < 1) deltas.push(d);
+  }
+  if (deltas.length === 0) return null;
+  deltas.sort((a, b) => a - b);
+  const median = deltas[Math.floor(deltas.length / 2)];
+  const raw = 1 / median;
+
+  for (const cand of [23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 120]) {
+    if (Math.abs(raw - cand) / cand < 0.02) return cand;
+  }
+  return Math.round(raw * 1000) / 1000;
 }
 
 export function evenlySpacedTimes(duration: number, count: number): number[] {

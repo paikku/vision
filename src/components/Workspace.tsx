@@ -10,6 +10,7 @@ import { MainMediaPanel } from "./MainMediaPanel";
 
 export function Workspace() {
   const media = useStore((s) => s.media);
+  const centerViewMode = useStore((s) => s.centerViewMode);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Register global keyboard shortcuts for the annotation workspace.
@@ -30,7 +31,7 @@ export function Workspace() {
             </div>
             <FrameStrip />
           </aside>
-          <Toolbar />
+          {centerViewMode !== "video" && <Toolbar />}
           <main className="relative min-w-0 flex-1 bg-[var(--color-bg)]">
             <MainMediaPanel />
           </main>

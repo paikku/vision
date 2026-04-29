@@ -25,6 +25,7 @@ export function ProjectWorkspace({
   videoId: string;
 }) {
   const media = useStore((s) => s.media);
+  const centerViewMode = useStore((s) => s.centerViewMode);
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resetRef = useRef(useStore.getState().reset);
@@ -164,7 +165,7 @@ export function ProjectWorkspace({
             </div>
             <FrameStrip />
           </aside>
-          <Toolbar />
+          {centerViewMode !== "video" && <Toolbar />}
           <main className="relative min-w-0 flex-1 bg-[var(--color-bg)]">
             <MainMediaPanel />
           </main>

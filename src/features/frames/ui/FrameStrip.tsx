@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { selectVisibleFrames, useStore } from "@/lib/store";
-import type { FrameFilterMode, FrameSortOrder } from "../slice";
+import type { FrameSortOrder } from "../slice";
 
 // Virtualization constants. Item height is measured at runtime from the first
 // rendered row so we adapt to any layout tweaks — these are only the initial
@@ -22,9 +22,12 @@ export function FrameStrip() {
   const exceptedFrameIds = useStore((s) => s.exceptedFrameIds);
   const toggleFrameException = useStore((s) => s.toggleFrameException);
   const sort = useStore((s) => s.frameSortOrder);
-  const filter = useStore((s) => s.frameFilterMode);
+  const unlabeledOnly = useStore((s) => s.unlabeledOnly);
+  const rangeFilterEnabled = useStore((s) => s.rangeFilterEnabled);
+  const frameRange = useStore((s) => s.frameRange);
   const setSort = useStore((s) => s.setFrameSortOrder);
-  const setFilter = useStore((s) => s.setFrameFilterMode);
+  const setUnlabeledOnly = useStore((s) => s.setUnlabeledOnly);
+  const setRangeFilterEnabled = useStore((s) => s.setRangeFilterEnabled);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -97,9 +100,11 @@ export function FrameStrip() {
         annotations,
         exceptedFrameIds,
         frameSortOrder: sort,
-        frameFilterMode: filter,
+        unlabeledOnly,
+        rangeFilterEnabled,
+        frameRange,
       }),
-    [frames, annotations, exceptedFrameIds, sort, filter],
+    [frames, annotations, exceptedFrameIds, sort, unlabeledOnly, rangeFilterEnabled, frameRange],
   );
 
   // Total scrollable height for all items. The last item doesn't need a
@@ -193,21 +198,32 @@ export function FrameStrip() {
         </div>
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-[var(--color-muted)] w-8 shrink-0">필터</span>
-          {(["all", "unlabeled"] as FrameFilterMode[]).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={[
-                "rounded px-2 py-0.5 text-[10px] transition",
-                filter === f
-                  ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                  : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
-              ].join(" ")}
-            >
-              {f === "all" ? "전체" : "미라벨"}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={() => setUnlabeledOnly(!unlabeledOnly)}
+            className={[
+              "rounded px-2 py-0.5 text-[10px] transition",
+              unlabeledOnly
+                ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
+            ].join(" ")}
+          >
+            미라벨
+          </button>
+          <button
+            type="button"
+            onClick={() => setRangeFilterEnabled(!rangeFilterEnabled)}
+            disabled={!frameRange}
+            title={frameRange ? "타임라인 범위 내 프레임만 표시" : "타임라인에서 범위를 먼저 설정하세요"}
+            className={[
+              "rounded px-2 py-0.5 text-[10px] transition disabled:opacity-40",
+              rangeFilterEnabled && frameRange
+                ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
+            ].join(" ")}
+          >
+            범위
+          </button>
         </div>
       </div>
 
@@ -218,7 +234,7 @@ export function FrameStrip() {
       >
         {filtered.length === 0 ? (
           <p className="py-4 text-center text-xs text-[var(--color-muted)]">
-            {filter === "unlabeled" ? "미라벨 프레임 없음" : "프레임 없음"}
+            {unlabeledOnly || rangeFilterEnabled ? "조건에 맞는 프레임 없음" : "프레임 없음"}
           </p>
         ) : (
           <div
