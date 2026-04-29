@@ -88,6 +88,9 @@ export const useStore = create<StoreState>()((set, get, store) => ({
       keepZoomOnFrameChange: false,
       interactionMode: "draw",
       exceptedFrameIds: {},
+      unlabeledOnly: false,
+      rangeFilterEnabled: false,
+      frameRange: null,
     });
   },
 
@@ -108,14 +111,18 @@ export function selectVisibleFrames(state: {
   annotations: StoreState["annotations"];
   exceptedFrameIds: StoreState["exceptedFrameIds"];
   frameSortOrder: StoreState["frameSortOrder"];
-  frameFilterMode: StoreState["frameFilterMode"];
+  unlabeledOnly: StoreState["unlabeledOnly"];
+  rangeFilterEnabled: StoreState["rangeFilterEnabled"];
+  frameRange: StoreState["frameRange"];
 }): Frame[] {
   const {
     frames,
     annotations,
     exceptedFrameIds,
     frameSortOrder,
-    frameFilterMode,
+    unlabeledOnly,
+    rangeFilterEnabled,
+    frameRange,
   } = state;
 
   const sorted =
@@ -123,13 +130,24 @@ export function selectVisibleFrames(state: {
       ? [...frames].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
       : frames;
 
-  if (frameFilterMode === "all") return sorted;
+  if (!unlabeledOnly && !(rangeFilterEnabled && frameRange)) return sorted;
 
   const counts = new Map<string, number>();
-  for (const a of annotations) {
-    counts.set(a.frameId, (counts.get(a.frameId) ?? 0) + 1);
+  if (unlabeledOnly) {
+    for (const a of annotations) {
+      counts.set(a.frameId, (counts.get(a.frameId) ?? 0) + 1);
+    }
   }
-  return sorted.filter(
-    (f) => (counts.get(f.id) ?? 0) === 0 && !exceptedFrameIds[f.id],
-  );
+
+  return sorted.filter((f) => {
+    if (unlabeledOnly) {
+      if ((counts.get(f.id) ?? 0) !== 0) return false;
+      if (exceptedFrameIds[f.id]) return false;
+    }
+    if (rangeFilterEnabled && frameRange) {
+      if (typeof f.timestamp !== "number") return false;
+      if (f.timestamp < frameRange.start || f.timestamp > frameRange.end) return false;
+    }
+    return true;
+  });
 }
