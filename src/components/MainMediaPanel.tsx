@@ -9,7 +9,7 @@ import {
   estimateVideoFps,
   type VideoSprite,
 } from "@/features/media/service/capture";
-import { BottomTimeline, type CaptureProgress } from "@/features/media/ui/BottomTimeline";
+import { BottomTimeline } from "@/features/media/ui/BottomTimeline";
 
 const STEP_MIN = 1 / 240;
 const STEP_MAX = 5;
@@ -34,7 +34,6 @@ export function MainMediaPanel() {
   const [fps, setFps] = useState<number | null>(null);
   const [fpsDetecting, setFpsDetecting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<CaptureProgress>(null);
   const [spriteProgress, setSpriteProgress] =
     useState<{ done: number; total: number } | null>(null);
   const [stepSec, setStepSec] = useState(1);
@@ -335,18 +334,9 @@ export function MainMediaPanel() {
         </div>
       </div>
 
-      {(spriteProgress || progress) && (
+      {spriteProgress && (
         <div className="px-3 pt-1 text-xs text-[var(--color-muted)]">
-          {spriteProgress && (
-            <span>
-              building timeline {spriteProgress.done}/{spriteProgress.total}…{" "}
-            </span>
-          )}
-          {progress && (
-            <span>
-              extracting frames {progress.done}/{progress.total}…
-            </span>
-          )}
+          building timeline {spriteProgress.done}/{spriteProgress.total}…
         </div>
       )}
 
@@ -362,7 +352,6 @@ export function MainMediaPanel() {
         isPlaying={isPlaying}
         busy={busy}
         setBusy={setBusy}
-        setProgress={setProgress}
       />
     </div>
   );

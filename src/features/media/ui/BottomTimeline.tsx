@@ -33,7 +33,6 @@ export type BottomTimelineProps = {
   isPlaying?: boolean;
   busy: boolean;
   setBusy: (v: boolean) => void;
-  setProgress: (p: CaptureProgress) => void;
 };
 
 type DragMode = "start" | "end" | "translate";
@@ -50,7 +49,6 @@ export function BottomTimeline({
   isPlaying,
   busy,
   setBusy,
-  setProgress,
 }: BottomTimelineProps) {
   const frames = useStore((s) => s.frames);
   const annotations = useStore((s) => s.annotations);
@@ -68,6 +66,8 @@ export function BottomTimeline({
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [intervalSec, setIntervalSec] = useState(1);
   const [intervalDraft, setIntervalDraft] = useState("1.000");
+  const [progress, setProgress] = useState<CaptureProgress>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Drag refs.
   const seekDragRef = useRef(false);
@@ -278,19 +278,29 @@ export function BottomTimeline({
     for (let i = 0; i < cnt; i++) {
       times.push(frameRange.start + (i + 0.5) * clampedInterval);
     }
+    const controller = new AbortController();
+    abortRef.current = controller;
     setBusy(true);
     setProgress({ done: 0, total: times.length });
     try {
-      const next = await extractFrames(media, {
+      await extractFrames(media, {
         times,
+        signal: controller.signal,
         onProgress: (done, total) => setProgress({ done, total }),
+        // Stream each frame into the store immediately so the strip and
+        // markers update live as encoding progresses.
+        onFrame: (f) => addFrames([f]),
       });
-      addFrames(next);
     } finally {
+      abortRef.current = null;
       setBusy(false);
       setProgress(null);
     }
-  }, [addFrames, clampedInterval, frameRange, media, setBusy, setProgress]);
+  }, [addFrames, clampedInterval, frameRange, media, setBusy]);
+
+  const cancelExtraction = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const removeRangeFrames = useCallback(() => {
     if (framesInRange.length === 0) return;
@@ -447,6 +457,23 @@ export function BottomTimeline({
           </>
         )}
       </div>
+
+      {/* Extraction progress + stop button */}
+      {progress && (
+        <div className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+          <span className="tabular-nums">
+            extracting frames {progress.done}/{progress.total}…
+          </span>
+          <button
+            type="button"
+            onClick={cancelExtraction}
+            className={BTN_DEFAULT}
+            title="여기까지 만들어진 프레임만 저장하고 중단"
+          >
+            중지
+          </button>
+        </div>
+      )}
 
       {/* Action row — single line. Buttons share the same shape/padding/font. */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
