@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getVideoData,
   getVideoMeta,
-  saveVideoData,
+  mutateVideoData,
   type VideoData,
 } from "@/lib/server/storage";
 
@@ -26,19 +26,19 @@ export async function PUT(
   if (!meta) return NextResponse.json({ error: "not found" }, { status: 404 });
   const body = (await req.json()) as Partial<VideoData>;
 
-  // Frame lifecycle (image bytes + id + ext) is owned by the frames endpoint.
-  // PUT data overlays only classes and annotations, so a save racing with a
-  // concurrent frame upload can't drop frames. Annotations that reference
+  // Frame lifecycle (image bytes + id + ext) is owned by the frames endpoint;
+  // PUT data only overlays classes and annotations. The mutator runs under a
+  // per-(project,video) lock, so a save can't observe a stale baseline and
+  // clobber a concurrent frame POST/DELETE. Annotations that reference
   // missing frames are filtered out defensively.
-  const existing = await getVideoData(id, vid);
-  const validFrameIds = new Set(existing.frames.map((f) => f.id));
-  const next: VideoData = {
-    classes: Array.isArray(body.classes) ? body.classes : existing.classes,
-    frames: existing.frames,
-    annotations: Array.isArray(body.annotations)
-      ? body.annotations.filter((a) => validFrameIds.has(a.frameId))
-      : existing.annotations,
-  };
-  await saveVideoData(id, vid, next);
+  await mutateVideoData(id, vid, (existing) => {
+    if (Array.isArray(body.classes)) existing.classes = body.classes;
+    if (Array.isArray(body.annotations)) {
+      const validFrameIds = new Set(existing.frames.map((f) => f.id));
+      existing.annotations = body.annotations.filter((a) =>
+        validFrameIds.has(a.frameId),
+      );
+    }
+  });
   return NextResponse.json({ ok: true });
 }

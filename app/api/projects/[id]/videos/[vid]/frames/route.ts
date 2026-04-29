@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import {
   extFromName,
-  getVideoData,
   getVideoMeta,
-  saveVideoData,
+  mutateVideoData,
   writeFrame,
   type StoredFrame,
 } from "@/lib/server/storage";
@@ -45,29 +44,43 @@ export async function POST(
     );
   }
 
-  const data = await getVideoData(id, vid);
-  const added: StoredFrame[] = [];
+  // Stage frame ids and image bytes outside the lock so the critical section
+  // is short. The lock is then taken just long enough to dedupe against the
+  // current data.json contents and append the new entries.
+  type Staged = { frame: StoredFrame; buf: Buffer };
+  const staged: Staged[] = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     if (!(f instanceof File)) continue;
     const fid = metas[i].id ?? crypto.randomUUID();
-    if (data.frames.some((x) => x.id === fid)) continue; // dedupe
     const ext = extFromName(f.name || "frame.jpg", "jpg");
     const buf = Buffer.from(await f.arrayBuffer());
-    await writeFrame(id, vid, fid, buf, ext);
-    const frame: StoredFrame = {
-      id: fid,
-      videoId: vid,
-      width: metas[i].width,
-      height: metas[i].height,
-      timestamp: metas[i].timestamp,
-      label: metas[i].label,
-      ext,
-      createdAt: Date.now(),
-    };
-    data.frames.push(frame);
-    added.push(frame);
+    staged.push({
+      frame: {
+        id: fid,
+        videoId: vid,
+        width: metas[i].width,
+        height: metas[i].height,
+        timestamp: metas[i].timestamp,
+        label: metas[i].label,
+        ext,
+        createdAt: Date.now(),
+      },
+      buf,
+    });
   }
-  await saveVideoData(id, vid, data);
+
+  const added = await mutateVideoData(id, vid, async (data) => {
+    const existing = new Set(data.frames.map((f) => f.id));
+    const result: StoredFrame[] = [];
+    for (const s of staged) {
+      if (existing.has(s.frame.id)) continue; // dedupe (idempotent retry)
+      await writeFrame(id, vid, s.frame.id, s.buf, s.frame.ext);
+      data.frames.push(s.frame);
+      result.push(s.frame);
+    }
+    return result;
+  });
+
   return NextResponse.json({ frames: added }, { status: 201 });
 }

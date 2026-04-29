@@ -37,14 +37,32 @@ export function useProjectSync({
   const classes = useStore((s) => s.classes);
 
   // Track which frame ids we've already persisted, so we don't re-upload
-  // every render. Seeded from the hydration step (see ProjectWorkspace).
+  // every render. Seeded as the hook observes server-backed frames; reset on
+  // every project/video switch so leftover ids from a previous video don't
+  // trigger phantom DELETE requests against the current video's endpoint.
   const knownFrameIdsRef = useRef<Set<string>>(new Set());
   const uploadingRef = useRef<Set<string>>(new Set());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Generation token: bumped on every (projectId, videoId) change. Async work
+  // captures the value at start and bails out on completion if it's stale, so
+  // an upload that finishes after the user has navigated away can't touch the
+  // new video's store state or refs.
+  const generationRef = useRef(0);
+  useEffect(() => {
+    generationRef.current += 1;
+    knownFrameIdsRef.current = new Set();
+    uploadingRef.current = new Set();
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+  }, [projectId, videoId]);
+
   // Frame sync: upload new, delete removed.
   useEffect(() => {
     if (!initialized) return;
+    const gen = generationRef.current;
     const currentIds = new Set(frames.map((f) => f.id));
 
     // Deletions (on server)
@@ -78,6 +96,10 @@ export function useProjectSync({
         );
         try {
           const stored = await uploadFrames(projectId, videoId, inputs);
+          // Stale generation: the user navigated away mid-upload. The server
+          // copy is persisted, so the upload itself isn't wasted, but we must
+          // not mutate the new video's store/refs with old-video frame ids.
+          if (generationRef.current !== gen) return;
           const idToExt = new Map(stored.map((s) => [s.id, s.ext]));
 
           // Rewrite the store's frames array: server URLs replace blobs. We
@@ -97,6 +119,7 @@ export function useProjectSync({
             uploadingRef.current.delete(s.id);
           }
         } catch {
+          if (generationRef.current !== gen) return;
           for (const f of newFrames) uploadingRef.current.delete(f.id);
         }
       })();
@@ -115,8 +138,13 @@ export function useProjectSync({
   // through the frame endpoints (POST/DELETE) so we don't send frames here.
   useEffect(() => {
     if (!initialized) return;
+    const gen = generationRef.current;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
+      // Drop the save if the user has switched away — the next video's hook
+      // run will save its own (post-hydration) classes/annotations, and the
+      // value we have here is no longer authoritative for any video.
+      if (generationRef.current !== gen) return;
       void saveVideoData(projectId, videoId, {
         classes,
         frames: [],

@@ -3,8 +3,8 @@ import {
   deleteFrame,
   getVideoData,
   mimeForExt,
+  mutateVideoData,
   readFrame,
-  saveVideoData,
 } from "@/lib/server/storage";
 
 export const runtime = "nodejs";
@@ -34,12 +34,12 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; vid: string; fid: string }> },
 ) {
   const { id, vid, fid } = await params;
-  const data = await getVideoData(id, vid);
-  const frame = data.frames.find((f) => f.id === fid);
-  if (!frame) return NextResponse.json({ ok: true });
-  await deleteFrame(id, vid, fid, frame.ext);
-  data.frames = data.frames.filter((f) => f.id !== fid);
-  data.annotations = data.annotations.filter((a) => a.frameId !== fid);
-  await saveVideoData(id, vid, data);
+  await mutateVideoData(id, vid, async (data) => {
+    const frame = data.frames.find((f) => f.id === fid);
+    if (!frame) return false; // skip write — nothing to do
+    await deleteFrame(id, vid, fid, frame.ext);
+    data.frames = data.frames.filter((f) => f.id !== fid);
+    data.annotations = data.annotations.filter((a) => a.frameId !== fid);
+  });
   return NextResponse.json({ ok: true });
 }

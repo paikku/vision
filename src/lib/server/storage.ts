@@ -38,9 +38,49 @@ async function readJson<T>(p: string, fallback: T): Promise<T> {
   }
 }
 
+// Crash-safe write: stage to a sibling tmp file, fsync if available, then
+// rename onto the target. A reader that opens the file mid-write will either
+// see the previous contents or the new contents — never a partial JSON.
 async function writeJson(p: string, value: unknown): Promise<void> {
   await ensureDir(path.dirname(p));
-  await fs.writeFile(p, JSON.stringify(value, null, 2), "utf-8");
+  const tmp = `${p}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf-8");
+    await fs.rename(tmp, p);
+  } catch (e) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
+}
+
+// ---------- per-file mutex ----------
+//
+// Multiple concurrent requests can land in the same Next.js node process and
+// race on the small JSON index files (projects.json, videos.json, data.json,
+// meta.json). All of those are read-modify-write, so naive concurrent access
+// drops entries: if two writers each read the same baseline and write back
+// independently, the second write clobbers the first.
+//
+// Every RMW path here funnels through `withFileLock(path, fn)`, which
+// serializes work per-path through a single shared promise chain. The chain
+// entry is replaced atomically and cleared once the tail settles, so an idle
+// path doesn't leak a Map entry. This is in-process only; there is one Next
+// node process so that is sufficient.
+const fileLocks = new Map<string, Promise<unknown>>();
+
+async function withFileLock<T>(
+  filePath: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const prev = fileLocks.get(filePath) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(() => fn());
+  fileLocks.set(filePath, next);
+  next
+    .catch(() => undefined)
+    .finally(() => {
+      if (fileLocks.get(filePath) === next) fileLocks.delete(filePath);
+    });
+  return next;
 }
 
 export type ProjectSummary = {
@@ -205,34 +245,39 @@ export async function createProject(name: string): Promise<Project> {
   await ensureDir(projectDir(id));
   await writeJson(path.join(projectDir(id), "project.json"), project);
   await writeJson(path.join(projectDir(id), "videos.json"), []);
-  const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
-    projects: [],
+  await withFileLock(PROJECTS_INDEX, async () => {
+    const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
+      projects: [],
+    });
+    if (!index.projects.includes(id)) index.projects.push(id);
+    await writeJson(PROJECTS_INDEX, index);
   });
-  if (!index.projects.includes(id)) index.projects.push(id);
-  await writeJson(PROJECTS_INDEX, index);
   return project;
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
-    projects: [],
+  await withFileLock(PROJECTS_INDEX, async () => {
+    const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
+      projects: [],
+    });
+    index.projects = index.projects.filter((x) => x !== id);
+    await writeJson(PROJECTS_INDEX, index);
   });
-  index.projects = index.projects.filter((x) => x !== id);
-  await writeJson(PROJECTS_INDEX, index);
   await fs.rm(projectDir(id), { recursive: true, force: true });
 }
 
 // ---------- videos ----------
 
+function videosIndexPath(projectId: string): string {
+  return path.join(projectDir(projectId), "videos.json");
+}
+
 async function readVideosIndex(projectId: string): Promise<string[]> {
-  const raw = await readJson<string[]>(
-    path.join(projectDir(projectId), "videos.json"),
-    [],
-  );
+  const raw = await readJson<string[]>(videosIndexPath(projectId), []);
   return raw;
 }
 async function writeVideosIndex(projectId: string, ids: string[]): Promise<void> {
-  await writeJson(path.join(projectDir(projectId), "videos.json"), ids);
+  await writeJson(videosIndexPath(projectId), ids);
 }
 
 export async function listVideos(projectId: string): Promise<VideoSummary[]> {
@@ -269,14 +314,19 @@ export async function getVideoMeta(
   }
 }
 
+function videoDataPath(projectId: string, videoId: string): string {
+  return path.join(videoDir(projectId, videoId), "data.json");
+}
+
 export async function getVideoData(
   projectId: string,
   videoId: string,
 ): Promise<VideoData> {
-  return readJson<VideoData>(
-    path.join(videoDir(projectId, videoId), "data.json"),
-    { classes: [], frames: [], annotations: [] },
-  );
+  return readJson<VideoData>(videoDataPath(projectId, videoId), {
+    classes: [],
+    frames: [],
+    annotations: [],
+  });
 }
 
 export async function saveVideoData(
@@ -284,7 +334,30 @@ export async function saveVideoData(
   videoId: string,
   data: VideoData,
 ): Promise<void> {
-  await writeJson(path.join(videoDir(projectId, videoId), "data.json"), data);
+  await writeJson(videoDataPath(projectId, videoId), data);
+}
+
+/**
+ * Locked read-modify-write on data.json. Use this for any mutation that
+ * depends on the current contents — frame add/remove, annotation overlay, etc.
+ * The mutator may modify `data` in place and/or return a value, which is
+ * forwarded to the caller. The write is skipped only if the mutator returns
+ * the literal value `false` (e.g. nothing to do).
+ */
+export async function mutateVideoData<T>(
+  projectId: string,
+  videoId: string,
+  mutator: (data: VideoData) => Promise<T> | T,
+): Promise<T> {
+  const file = videoDataPath(projectId, videoId);
+  return withFileLock(file, async () => {
+    const data = await getVideoData(projectId, videoId);
+    const result = await mutator(data);
+    if ((result as unknown) !== false) {
+      await writeJson(file, data);
+    }
+    return result;
+  });
 }
 
 export async function createVideo(
@@ -307,9 +380,11 @@ export async function createVideo(
     frames: [],
     annotations: [],
   });
-  const ids = await readVideosIndex(projectId);
-  ids.push(id);
-  await writeVideosIndex(projectId, ids);
+  await withFileLock(videosIndexPath(projectId), async () => {
+    const ids = await readVideosIndex(projectId);
+    if (!ids.includes(id)) ids.push(id);
+    await writeVideosIndex(projectId, ids);
+  });
   return full;
 }
 
@@ -317,11 +392,13 @@ export async function deleteVideo(
   projectId: string,
   videoId: string,
 ): Promise<void> {
-  const ids = await readVideosIndex(projectId);
-  await writeVideosIndex(
-    projectId,
-    ids.filter((x) => x !== videoId),
-  );
+  await withFileLock(videosIndexPath(projectId), async () => {
+    const ids = await readVideosIndex(projectId);
+    await writeVideosIndex(
+      projectId,
+      ids.filter((x) => x !== videoId),
+    );
+  });
   await fs.rm(videoDir(projectId, videoId), { recursive: true, force: true });
 }
 
@@ -399,22 +476,25 @@ export async function writePreviews(
   videoId: string,
   buffers: Buffer[],
 ): Promise<number> {
-  const meta = await getVideoMeta(projectId, videoId);
-  if (!meta) throw new Error("video not found");
-  // Wipe any older preview set so a re-upload doesn't leave stale frames.
-  const oldCount = meta.previewCount ?? 0;
-  for (let i = 0; i < Math.max(oldCount, buffers.length); i++) {
-    await fs.rm(previewPath(projectId, videoId, i), { force: true });
-  }
-  for (let i = 0; i < buffers.length; i++) {
-    await fs.writeFile(
-      previewPath(projectId, videoId, i),
-      new Uint8Array(buffers[i]),
-    );
-  }
-  const next: VideoMeta = { ...meta, previewCount: buffers.length };
-  await writeJson(path.join(videoDir(projectId, videoId), "meta.json"), next);
-  return buffers.length;
+  const metaFile = path.join(videoDir(projectId, videoId), "meta.json");
+  return withFileLock(metaFile, async () => {
+    const meta = await getVideoMeta(projectId, videoId);
+    if (!meta) throw new Error("video not found");
+    // Wipe any older preview set so a re-upload doesn't leave stale frames.
+    const oldCount = meta.previewCount ?? 0;
+    for (let i = 0; i < Math.max(oldCount, buffers.length); i++) {
+      await fs.rm(previewPath(projectId, videoId, i), { force: true });
+    }
+    for (let i = 0; i < buffers.length; i++) {
+      await fs.writeFile(
+        previewPath(projectId, videoId, i),
+        new Uint8Array(buffers[i]),
+      );
+    }
+    const next: VideoMeta = { ...meta, previewCount: buffers.length };
+    await writeJson(metaFile, next);
+    return buffers.length;
+  });
 }
 
 export async function readPreview(
