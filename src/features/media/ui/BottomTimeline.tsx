@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { selectVisibleFrames, useStore } from "@/lib/store";
-import { evenlySpacedTimes, extractFrames, formatTime, type VideoSprite } from "../service/capture";
+import { extractFrames, formatTime, type VideoSprite } from "../service/capture";
 import type { MediaSource } from "../types";
 
 const HOVER_POPUP_WIDTH = 480;
@@ -56,7 +56,7 @@ export function BottomTimeline({
   const rangeTrackRef = useRef<HTMLDivElement>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
-  const [count, setCount] = useState(8);
+  const [intervalSec, setIntervalSec] = useState(1);
 
   // Range drag state.
   const dragModeRef = useRef<DragMode | null>(null);
@@ -101,10 +101,14 @@ export function BottomTimeline({
     );
   }, [frames, frameRange]);
 
-  const minStep = fps && fps > 0 ? 1 / fps : 0.001;
   const span = frameRange ? Math.max(0, frameRange.end - frameRange.start) : 0;
-  const maxN = span > 0 ? Math.max(1, Math.floor(span / minStep) - 1) : 1;
-  const clampedCount = Math.min(maxN, Math.max(1, count));
+  const minInterval = fps && fps > 0 ? 1 / fps : 0.001;
+  const maxInterval = span > 0 ? span : minInterval;
+  const clampedInterval = Math.min(
+    maxInterval,
+    Math.max(minInterval, intervalSec),
+  );
+  const sampleCount = span > 0 ? Math.floor(span / clampedInterval) : 0;
 
   const ratioFromX = useCallback((clientX: number, el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
@@ -200,9 +204,12 @@ export function BottomTimeline({
     if (!frameRange || media.kind !== "video") return;
     const sp = frameRange.end - frameRange.start;
     if (sp <= 0) return;
-    const n = clampedCount;
-    if (n <= 0) return;
-    const times = evenlySpacedTimes(sp, n).map((t) => t + frameRange.start);
+    const cnt = Math.floor(sp / clampedInterval);
+    if (cnt <= 0) return;
+    const times: number[] = [];
+    for (let i = 0; i < cnt; i++) {
+      times.push(frameRange.start + (i + 0.5) * clampedInterval);
+    }
     setBusy(true);
     setProgress({ done: 0, total: times.length });
     try {
@@ -215,7 +222,7 @@ export function BottomTimeline({
       setBusy(false);
       setProgress(null);
     }
-  }, [addFrames, clampedCount, frameRange, media, setBusy, setProgress]);
+  }, [addFrames, clampedInterval, frameRange, media, setBusy, setProgress]);
 
   const removeRangeFrames = useCallback(() => {
     if (framesInRange.length === 0) return;
@@ -396,25 +403,28 @@ export function BottomTimeline({
           </button>
         )}
         <div className="flex items-center gap-1 rounded border border-[var(--color-line)] px-1.5 py-0.5">
-          <span>N등분</span>
+          <span>N초</span>
           <input
             type="number"
-            min={1}
-            max={maxN}
-            value={count}
+            min={minInterval}
+            max={maxInterval}
+            step={minInterval}
+            value={Number(intervalSec.toFixed(3))}
             onChange={(e) => {
-              const v = Number(e.target.value) || 1;
-              setCount(Math.max(1, Math.min(maxN, v)));
+              const v = parseFloat(e.target.value);
+              if (!Number.isFinite(v)) return;
+              setIntervalSec(
+                Math.max(minInterval, Math.min(maxInterval, v)),
+              );
             }}
-            className="w-14 rounded bg-[var(--color-surface-2)] px-1 py-0.5 text-center text-[var(--color-text)] tabular-nums outline-none"
+            className="w-20 rounded bg-[var(--color-surface-2)] px-1 py-0.5 text-center text-[var(--color-text)] tabular-nums outline-none"
           />
           <span className="text-[10px] tabular-nums">
-            ≤ {maxN}
-            {span > 0 ? ` · ≈${(span / (clampedCount + 1)).toFixed(2)}s` : ""}
+            {minInterval.toFixed(3)}~{maxInterval.toFixed(2)}s · {sampleCount}개
           </span>
           <button
             type="button"
-            disabled={busy || span <= 0}
+            disabled={busy || sampleCount <= 0}
             onClick={() => void captureRangeEvenly()}
             className="ml-1 rounded bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-text)] hover:bg-[var(--color-line)] disabled:opacity-50"
           >

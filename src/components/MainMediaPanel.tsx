@@ -161,10 +161,18 @@ export function MainMediaPanel() {
     }
   }, [addFrames, media]);
 
-  const seek = useCallback((t: number) => {
-    setTime(t);
-    if (videoRef.current) videoRef.current.currentTime = t;
-  }, []);
+  const seek = useCallback(
+    (t: number) => {
+      setTime(t);
+      const v = videoRef.current;
+      if (v) v.currentTime = t;
+      if (!isVideoMode) {
+        if (v) v.pause();
+        setCenterViewMode("video");
+      }
+    },
+    [isVideoMode, setCenterViewMode],
+  );
 
   // Keyboard shortcuts. Frame mode handles ArrowUp/Down navigation only;
   // video mode handles Space/C/Arrow stepping.
