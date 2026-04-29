@@ -35,10 +35,44 @@ export type StoreState = MediaSlice &
     exportJson: () => string;
   };
 
+/** Tolerance in seconds when checking whether a captured frame's timestamp
+ *  collides with an existing frame. Half a 60fps interval is small enough to
+ *  never merge legitimately distinct frames yet large enough to absorb the
+ *  rounding noise from independent capture paths. */
+const TIMESTAMP_DEDUPE_EPS = 0.008;
+
 export const useStore = create<StoreState>()((set, get, store) => ({
   ...createMediaSlice(set, get, store),
   ...createFramesSlice(set, get, store),
   ...createAnnotationsSlice(set, get, store),
+
+  addFrames: (newFrames) => {
+    const s = get();
+    const existingTs: number[] = [];
+    for (const f of s.frames) {
+      if (typeof f.timestamp === "number") existingTs.push(f.timestamp);
+    }
+    const accepted: Frame[] = [];
+    const acceptedTs: number[] = [];
+    for (const f of newFrames) {
+      const t = typeof f.timestamp === "number" ? f.timestamp : null;
+      const isDup =
+        t !== null &&
+        (existingTs.some((et) => Math.abs(et - t) < TIMESTAMP_DEDUPE_EPS) ||
+          acceptedTs.some((at) => Math.abs(at - t) < TIMESTAMP_DEDUPE_EPS));
+      if (isDup) {
+        if (f.url.startsWith("blob:")) URL.revokeObjectURL(f.url);
+        continue;
+      }
+      accepted.push(f);
+      if (t !== null) acceptedTs.push(t);
+    }
+    if (accepted.length === 0) return;
+    set({
+      frames: [...s.frames, ...accepted],
+      activeFrameId: s.activeFrameId ?? accepted[0]?.id ?? null,
+    });
+  },
 
   setMedia: (media) => {
     const prev = get().media;
@@ -89,7 +123,7 @@ export const useStore = create<StoreState>()((set, get, store) => ({
       interactionMode: "draw",
       exceptedFrameIds: {},
       unlabeledOnly: false,
-      rangeFilterEnabled: false,
+      rangeFilterEnabled: true,
       frameRange: null,
     });
   },

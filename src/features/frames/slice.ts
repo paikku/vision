@@ -37,7 +37,7 @@ export const createFramesSlice: StateCreator<FramesSlice, [], [], FramesSlice> =
   exceptedFrameIds: {},
   frameSortOrder: "added",
   unlabeledOnly: false,
-  rangeFilterEnabled: false,
+  rangeFilterEnabled: true,
   frameRange: null,
 
   addFrames: (frames) =>
