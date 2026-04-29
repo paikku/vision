@@ -7,7 +7,6 @@ import {
   buildVideoSprite,
   captureFrameFromVideoElement,
   estimateVideoFps,
-  formatTime,
   type VideoSprite,
 } from "@/features/media/service/capture";
 import { BottomTimeline, type CaptureProgress } from "@/features/media/ui/BottomTimeline";
@@ -41,6 +40,7 @@ export function MainMediaPanel() {
   const [stepSec, setStepSec] = useState(1);
   const stepInitializedRef = useRef(false);
   const rangeInitializedForRef = useRef<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const isVideoMode = centerViewMode === "video";
 
@@ -174,6 +174,17 @@ export function MainMediaPanel() {
     [isVideoMode, setCenterViewMode],
   );
 
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      setCenterViewMode("video");
+      void v.play();
+    } else {
+      v.pause();
+    }
+  }, [setCenterViewMode]);
+
   // Keyboard shortcuts. Frame mode handles ArrowUp/Down navigation only;
   // video mode handles Space/C/Arrow stepping.
   useEffect(() => {
@@ -282,36 +293,9 @@ export function MainMediaPanel() {
               playsInline
               onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
               onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
             />
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-            <button
-              type="button"
-              onClick={() => {
-                const v = videoRef.current;
-                if (!v) return;
-                if (v.paused) {
-                  setCenterViewMode("video");
-                  void v.play();
-                } else v.pause();
-              }}
-              className="rounded border border-[var(--color-line)] px-2 py-1 text-[var(--color-text)] hover:border-[var(--color-accent)]"
-            >
-              play / pause
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={duration || 0}
-              step={0.05}
-              value={time}
-              onChange={(e) => seek(parseFloat(e.target.value))}
-              className="flex-1 accent-[var(--color-accent)]"
-            />
-            <span className="tabular-nums">
-              {formatTime(time)} / {formatTime(duration)}
-            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-line)] px-2 py-1 text-[11px] text-[var(--color-muted)]">
@@ -374,6 +358,8 @@ export function MainMediaPanel() {
         cursorTime={cursorTime}
         onSeek={seek}
         captureCurrent={isVideoMode ? captureCurrent : undefined}
+        togglePlay={isVideoMode ? togglePlay : undefined}
+        isPlaying={isPlaying}
         busy={busy}
         setBusy={setBusy}
         setProgress={setProgress}
