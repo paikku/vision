@@ -5,7 +5,6 @@ import { selectVisibleFrames, useStore } from "@/lib/store";
 import { extractFrames, formatTime, type VideoSprite } from "../service/capture";
 import type { MediaSource } from "../types";
 
-const HOVER_POPUP_WIDTH = 480;
 const HANDLE_HIT_PX = 8;
 
 const BTN_BASE =
@@ -62,8 +61,6 @@ export function BottomTimeline({
   const addFrames = useStore((s) => s.addFrames);
   const removeFrame = useStore((s) => s.removeFrame);
 
-  const [hoverTime, setHoverTime] = useState<number | null>(null);
-  const [hoverX, setHoverX] = useState<number | null>(null);
   const [intervalSec, setIntervalSec] = useState(1);
   const [intervalDraft, setIntervalDraft] = useState("1.000");
   const [progress, setProgress] = useState<CaptureProgress>(null);
@@ -219,16 +216,6 @@ export function BottomTimeline({
 
   // -------------------- preview track interactions --------------------
 
-  const updateHover = useCallback(
-    (clientX: number, el: HTMLElement) => {
-      const rect = el.getBoundingClientRect();
-      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-      setHoverTime(ratio * duration);
-      setHoverX(clientX - rect.left);
-    },
-    [duration],
-  );
-
   const onPreviewPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!onSeek || !duration) return;
@@ -236,19 +223,17 @@ export function BottomTimeline({
       e.currentTarget.setPointerCapture(e.pointerId);
       seekDragRef.current = true;
       onSeek(ratioFromX(e.clientX, e.currentTarget) * duration);
-      updateHover(e.clientX, e.currentTarget);
     },
-    [duration, onSeek, ratioFromX, updateHover],
+    [duration, onSeek, ratioFromX],
   );
 
   const onPreviewPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      updateHover(e.clientX, e.currentTarget);
       if (seekDragRef.current && onSeek && duration) {
         onSeek(ratioFromX(e.clientX, e.currentTarget) * duration);
       }
     },
-    [duration, onSeek, ratioFromX, updateHover],
+    [duration, onSeek, ratioFromX],
   );
 
   const onPreviewPointerUp = useCallback(
@@ -260,11 +245,6 @@ export function BottomTimeline({
     },
     [],
   );
-
-  const onPreviewLeave = useCallback(() => {
-    setHoverTime(null);
-    setHoverX(null);
-  }, []);
 
   // -------------------- actions --------------------
 
@@ -316,30 +296,7 @@ export function BottomTimeline({
     setFrameRange({ start: 0, end: duration });
   }, [duration, setFrameRange]);
 
-  // -------------------- preview tile lookup --------------------
-
-  const previewTime = hoverTime ?? cursorTime ?? 0;
-  const spriteIndex = sprite
-    ? (() => {
-        const idx = sprite.timestamps.findIndex((ts, i, arr) => {
-          const next = arr[i + 1] ?? Infinity;
-          return previewTime >= ts && previewTime < next;
-        });
-        if (idx >= 0) return idx;
-        return previewTime < (sprite.timestamps[0] ?? 0)
-          ? 0
-          : sprite.timestamps.length - 1;
-      })()
-    : -1;
-  const previewCol = sprite && spriteIndex >= 0 ? spriteIndex % sprite.columns : 0;
-  const previewRow =
-    sprite && spriteIndex >= 0 ? Math.floor(spriteIndex / sprite.columns) : 0;
   const tileCount = sprite?.timestamps.length ?? 0;
-
-  const popupHeight = sprite
-    ? Math.round((HOVER_POPUP_WIDTH * sprite.cellHeight) / sprite.cellWidth)
-    : 0;
-  const popupScale = sprite ? HOVER_POPUP_WIDTH / sprite.cellWidth : 1;
 
   // -------------------- render --------------------
 
@@ -348,14 +305,13 @@ export function BottomTimeline({
       {/* Sprite preview track — doubles as the playback scrubber. */}
       <div
         className={[
-          "relative h-10 overflow-visible rounded-md border border-[var(--color-line)] select-none",
+          "relative h-10 overflow-hidden rounded-md border border-[var(--color-line)] select-none",
           onSeek ? "cursor-pointer" : "cursor-default",
         ].join(" ")}
         onPointerDown={onPreviewPointerDown}
         onPointerMove={onPreviewPointerMove}
         onPointerUp={onPreviewPointerUp}
         onPointerCancel={onPreviewPointerUp}
-        onPointerLeave={onPreviewLeave}
       >
         <div className="absolute inset-0 overflow-hidden rounded-md">
           {sprite && tileCount > 0 && (
@@ -402,30 +358,6 @@ export function BottomTimeline({
             );
           })}
         </div>
-        {sprite && hoverX !== null && hoverTime !== null && spriteIndex >= 0 && (
-          <div
-            className="pointer-events-none absolute bottom-full z-30 mb-2 overflow-hidden rounded border border-[var(--color-line)] bg-black shadow-lg"
-            style={{
-              left: `clamp(0px, ${hoverX - HOVER_POPUP_WIDTH / 2}px, calc(100% - ${HOVER_POPUP_WIDTH}px))`,
-              width: HOVER_POPUP_WIDTH,
-            }}
-          >
-            <div
-              style={{
-                width: HOVER_POPUP_WIDTH,
-                height: popupHeight,
-                backgroundImage: `url(${sprite.url})`,
-                backgroundPosition: `${-previewCol * sprite.cellWidth * popupScale}px ${-previewRow * sprite.cellHeight * popupScale}px`,
-                backgroundSize: `${sprite.width * popupScale}px ${sprite.height * popupScale}px`,
-                backgroundRepeat: "no-repeat",
-                imageRendering: "auto",
-              }}
-            />
-            <div className="px-1 py-0.5 text-center text-[11px] text-white tabular-nums">
-              {formatTime(hoverTime)}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Range track */}
