@@ -3,6 +3,7 @@ import {
   getVideoData,
   getVideoMeta,
   mutateVideoData,
+  reconcileVideoFrames,
   type VideoData,
 } from "@/lib/server/storage";
 
@@ -13,6 +14,10 @@ export async function GET(
   const { id, vid } = await params;
   const meta = await getVideoMeta(id, vid);
   if (!meta) return NextResponse.json({ error: "not found" }, { status: 404 });
+  // Self-heal: any frame jpgs on disk that aren't yet in data.json get
+  // re-registered before we hand state to the client. Idempotent and quick
+  // when there's nothing to do.
+  await reconcileVideoFrames(id, vid, meta);
   const data = await getVideoData(id, vid);
   return NextResponse.json({ meta, data });
 }

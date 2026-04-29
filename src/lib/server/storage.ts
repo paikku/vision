@@ -193,12 +193,46 @@ export function genId(): string {
 
 // ---------- projects ----------
 
-export async function listProjects(): Promise<ProjectSummary[]> {
-  const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
-    projects: [],
+/**
+ * Self-heal: scan STORAGE_ROOT for any subdirectory that has a `project.json`
+ * but isn't listed in `projects.json`, and re-add it. This recovers from
+ * pre-fix race conditions where a `createProject` writer clobbered another's
+ * append, leaving the project directory on disk but unreferenced. Idempotent
+ * and cheap on a clean index.
+ */
+async function ensureProjectsIndex(): Promise<string[]> {
+  return withFileLock(PROJECTS_INDEX, async () => {
+    const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
+      projects: [],
+    });
+    const known = new Set(index.projects);
+    let entries: string[] = [];
+    try {
+      const dir = await fs.readdir(STORAGE_ROOT, { withFileTypes: true });
+      entries = dir.filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    let mutated = false;
+    for (const name of entries) {
+      if (known.has(name)) continue;
+      try {
+        await fs.access(path.join(STORAGE_ROOT, name, "project.json"));
+        index.projects.push(name);
+        mutated = true;
+      } catch {
+        // not a project dir; skip
+      }
+    }
+    if (mutated) await writeJson(PROJECTS_INDEX, index);
+    return index.projects.slice();
   });
+}
+
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const ids = await ensureProjectsIndex();
   const summaries: ProjectSummary[] = [];
-  for (const id of index.projects) {
+  for (const id of ids) {
     try {
       summaries.push(await getProjectSummary(id));
     } catch {
@@ -280,13 +314,49 @@ async function writeVideosIndex(projectId: string, ids: string[]): Promise<void>
   await writeJson(videosIndexPath(projectId), ids);
 }
 
+/**
+ * Self-heal: append any video subdirectory under `{projectId}/` that has a
+ * `meta.json` but is missing from `videos.json`. Mirrors `ensureProjectsIndex`
+ * — recovers from pre-fix race conditions where `createVideo` lost an append.
+ */
+async function ensureVideosIndex(projectId: string): Promise<string[]> {
+  return withFileLock(videosIndexPath(projectId), async () => {
+    const ids = await readVideosIndex(projectId);
+    const known = new Set(ids);
+    let entries: string[] = [];
+    try {
+      const dir = await fs.readdir(projectDir(projectId), {
+        withFileTypes: true,
+      });
+      entries = dir.filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    let mutated = false;
+    for (const name of entries) {
+      if (known.has(name)) continue;
+      try {
+        await fs.access(path.join(videoDir(projectId, name), "meta.json"));
+        ids.push(name);
+        mutated = true;
+      } catch {
+        // not a video dir
+      }
+    }
+    if (mutated) await writeVideosIndex(projectId, ids);
+    return ids.slice();
+  });
+}
+
 export async function listVideos(projectId: string): Promise<VideoSummary[]> {
-  const ids = await readVideosIndex(projectId);
+  const ids = await ensureVideosIndex(projectId);
   const out: VideoSummary[] = [];
   for (const id of ids) {
     try {
       const meta = await getVideoMeta(projectId, id);
       if (!meta) continue;
+      // Reconcile orphaned frame files into data.json before counting.
+      await reconcileVideoFrames(projectId, id, meta);
       const data = await getVideoData(projectId, id);
       out.push({
         ...meta,
@@ -299,6 +369,74 @@ export async function listVideos(projectId: string): Promise<VideoSummary[]> {
   }
   out.sort((a, b) => a.createdAt - b.createdAt);
   return out;
+}
+
+/**
+ * Self-heal: scan `frames/` for image files that aren't tracked in data.json
+ * and append best-effort entries (width/height inherited from the parent
+ * video meta — accurate for normal video-extracted frames). Recovers from
+ * pre-fix races where a `frames POST` was clobbered by a concurrent `data
+ * PUT`, leaving the jpg on disk but absent from data.json. Idempotent.
+ */
+export async function reconcileVideoFrames(
+  projectId: string,
+  videoId: string,
+  meta?: VideoMeta | null,
+): Promise<void> {
+  const dir = framesDir(projectId, videoId);
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e;
+  }
+  if (entries.length === 0) return;
+
+  // Cheap pre-check outside the lock: bail if every disk file already has a
+  // matching data.json entry. Avoids taking the lock on the common path.
+  const existing = await getVideoData(projectId, videoId);
+  const tracked = new Set(existing.frames.map((f) => f.id));
+  const candidates: { id: string; ext: string; mtimeMs: number }[] = [];
+  for (const name of entries) {
+    const m = /^(.+)\.([a-zA-Z0-9]+)$/.exec(name);
+    if (!m) continue;
+    const id = m[1];
+    const ext = m[2].toLowerCase();
+    if (tracked.has(id)) continue;
+    let mtimeMs = Date.now();
+    try {
+      const st = await fs.stat(path.join(dir, name));
+      mtimeMs = st.mtimeMs;
+    } catch {
+      // ignore
+    }
+    candidates.push({ id, ext, mtimeMs });
+  }
+  if (candidates.length === 0) return;
+
+  const resolvedMeta = meta ?? (await getVideoMeta(projectId, videoId));
+  if (!resolvedMeta) return;
+
+  await mutateVideoData(projectId, videoId, (data) => {
+    const have = new Set(data.frames.map((f) => f.id));
+    let added = 0;
+    for (const c of candidates) {
+      if (have.has(c.id)) continue;
+      data.frames.push({
+        id: c.id,
+        videoId,
+        width: resolvedMeta.width,
+        height: resolvedMeta.height,
+        timestamp: undefined,
+        label: "",
+        ext: c.ext,
+        createdAt: c.mtimeMs,
+      });
+      added++;
+    }
+    if (added === 0) return false; // nothing to write
+  });
 }
 
 export async function getVideoMeta(
