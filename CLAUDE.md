@@ -32,7 +32,7 @@ npm run lint       # next lint 기반 ESLint
 
 ```text
 src/
-  components/           # shell · 여러 feature 조합하는 유일한 자리 (ProjectsPage, ProjectDetailPage, ProjectWorkspace, ProjectTopBar, UploadVideoModal, useProjectSync)
+  components/           # shell · 여러 feature 조합하는 유일한 자리 (ProjectsPage, ProjectDetailPage, ProjectWorkspace, ProjectTopBar, UploadVideoModal, MainMediaPanel, useProjectSync)
   features/
     media/              # 업로드·normalize·비디오 재생·프레임 추출
     frames/             # 프레임 목록·활성 프레임·exception
@@ -73,6 +73,16 @@ MediaSource → Frame[] → Annotation[]
 | `interactionMode` | `"draw" \| "edit"` | 현재 인터랙션 모드 |
 | `keepZoomOnFrameChange` | `boolean` | 프레임 전환 시 줌 유지 여부 |
 | `hoveredAnnotationId` | `string \| null` | 패널·스테이지 hover 동기화용 |
+| `frameRange` | `{start,end} \| null` | 타임라인 범위 트랙 + 범위 필터의 단일 source. 미디어 로드 시 `[0, duration]`로 자동 초기화 |
+| `rangeFilterEnabled` | `boolean` | 범위 필터 토글. **기본값 true** — 범위 밖 프레임은 FrameStrip에서 숨김 |
+
+### 프레임 timestamp 중복 차단
+
+`addFrames` 는 composition root(`lib/store.ts`)에서 오버라이드되어 있다. 모든 캡처 경로(현재 캡쳐 / 균등캡쳐 / 향후 추가될 경로)가 단일 entry point 를 통과하므로 중복 차단도 한 곳에서 처리한다.
+
+- 들어온 프레임 중 기존 store + 같은 배치 내 다른 프레임과 `|Δt| < 0.008s` 인 후보를 드롭.
+- 드롭된 프레임의 blob URL 은 즉시 `URL.revokeObjectURL` 로 정리해 누수 방지.
+- `timestamp` 가 없는 프레임(이미지 등)은 항상 통과.
 
 ---
 
@@ -187,7 +197,8 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 ## 6) FrameStrip (`src/features/frames/ui/FrameStrip.tsx`)
 
 - **정렬**: 추가순 / 시간순(timestamp 기준)
-- **필터**: 전체 / 미라벨(annotation 0개 + `exceptedFrameIds`에 없는 frame)
+- **필터**: 미라벨(annotation 0개 + `exceptedFrameIds`에 없는 frame) / 범위(`frameRange` 안의 timestamp 만)
+  - 범위 필터는 **기본 ON**. 미디어 로드 시 `frameRange = [0, duration]` 으로 초기화되므로 처음에는 보이는 결과가 동일하지만, 사용자가 BottomTimeline 의 핸들을 좁히면 즉시 strip 도 좁혀짐.
 - **제외(except)**: annotation 0개인 frame에 표시. 미라벨 필터에서 제외됨. 썸네일 하단 좌측 배지 영역에 인라인 표시 (class 배지와 동일 위치)
 - **Class 배지**: frame 하단에 class별 annotation 수를 색상 pill로 표시
 - active frame 변경 시 `scrollIntoView({ block: "nearest" })`로 자동 스크롤
@@ -215,17 +226,41 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ## 9) 비디오 타임라인/프레임 추출 파이프라인
 
-`src/features/media/ui/VideoFramePicker.tsx` 기준:
+워크스페이스 중앙 패널은 shell 인 `MainMediaPanel` 이 통합 오너 한다. 비디오 element / sprite / fps / time / busy 등 비디오 상태는 모두 여기에 있고, 하단 타임라인은 feature 컴포넌트 `BottomTimeline` 에 위임한다.
 
-- **M1 (인프라)**: worker 기반 키프레임 탐색 + sprite 생성
-  - `src/features/media/service/capture.ts::buildVideoSprite`
-  - `public/workers/sprite-worker.js` (MP4Box 파싱)
-  - 실패 시 `evenlySpacedTimes(...)` 폴백
-- **M2 (타임라인 UI)**: 즉시 hover 프리뷰 + 클릭 seek
-- **M3 (캡처 UX)**: `requestVideoFrameCallback` 인지 캡처 + 단축키
-  - `Space`: 재생/일시정지
-  - `C`: 캡처
-  - `←/→`: ±1초 (`Shift`와 함께 ±5초)
+### 9.1 `MainMediaPanel` (`src/components/MainMediaPanel.tsx`)
+
+- 비디오 element 는 **항상 마운트** (video 모드 = 보임 / frame 모드 = `display:none`). fps 추정·sprite·seek·`captureCurrent` 가 모드 전환 시 끊기지 않게 하기 위함.
+- `centerViewMode === "video"`: 비디오 + 스텝 입력 패널.
+- `centerViewMode === "frame"`: `<AnnotationStage />` + 우하단에 "비디오 재생으로 전환" 텍스트 버튼만 (mini PIP 비디오는 없음).
+- video 모드일 때 `<Toolbar />` 는 `ProjectWorkspace`/`Workspace` 에서 숨김.
+- 키보드: video 모드는 `Space/C/←/→`, frame 모드는 `↑/↓` 만 처리.
+- `seek(t)` 는 video 모드면 그냥 `currentTime` 갱신, frame 모드에서 호출되면 `centerViewMode = "video"` 로 전환 + `pause()` + `currentTime` 설정 → BottomTimeline 트랙 클릭 한 번으로 정지된 비디오 화면으로 자연스럽게 넘어옴.
+
+### 9.2 `BottomTimeline` (`src/features/media/ui/BottomTimeline.tsx`)
+
+video 모드와 frame 모드에 동일하게 표시되는 통합 하단 영역. 세 줄로 구성:
+
+1. **Sprite preview / scrubber 트랙** — `pointerdown/move/up` 으로 클릭 + 드래그 모두 seek. 별도 hover 팝업은 두지 않음. cursor 라인은 video 모드면 `video.currentTime`, frame 모드면 active frame 의 timestamp.
+   - 프레임 마커 3색: 현재 선택 frame = accent / 필터 통과 = amber / 필터 제외 = zinc dim.
+2. **Range 트랙** — handle 항상 표시. handle 드래그 = resize, 본문/빈영역 드래그 = width 유지 평행이동(0~duration 클램프). `frameRange` 는 범위 필터와 균등 캡쳐 모두의 단일 source.
+3. **단일 액션 줄** — 모든 버튼이 같은 베이스 클래스(`BTN_BASE`)와 변형(`BTN_DEFAULT`/`BTN_PRIMARY`/`BTN_DANGER`)을 공유. 좌→우: ▶/⏸ 토글 · `현재시간/전체시간` · 범위 라벨 · `초기화` · `현재 캡쳐`(video 모드만) · `N초 [입력] (min~max · n개)` · `균등캡쳐` · `범위 N개 삭제`.
+   - **N초 입력**: 로컬 draft 상태로 받고 **blur 또는 Enter 에서만 commit**. ESC 로 되돌림. min/max 는 fps 기반 (`minInterval = 1/fps`, `maxInterval = span`) 으로 자동 클램프 — 그 외 값은 입력 자체가 차단됨. 결과 개수도 commit 후에만 갱신.
+   - **균등캡쳐 위치 산출**: `times = [start + (i+0.5)*interval for i in 0..floor(span/interval))]` — 중앙 정렬, 양 끝점 제외.
+
+### 9.3 추출 파이프라인 (`src/features/media/service/capture.ts`)
+
+- **sprite 빌드**: worker 기반 키프레임 탐색(`public/workers/sprite-worker.js`, MP4Box) → 실패 시 `evenlySpacedTimes(...)` 폴백.
+- **fps 추정**: `requestVideoFrameCallback` 12 샘플의 중앙값. 잘 알려진 fps 후보(23.976/24/25/...)에 ±2% 안이면 그 값으로 스냅.
+- **`extractFrames`**: 옵션 `times[]` 를 순회하며 seek + canvas draw + `toBlob` 으로 인코딩. **두 가지 스트리밍 hook 지원**:
+  - `onFrame: (frame) => void` — 인코딩 끝나는 즉시 emit. BottomTimeline 의 균등캡쳐가 이걸 `addFrames([f])` 로 흘려 넣어서 진행 중 strip / 마커가 실시간 갱신됨.
+  - `signal: AbortSignal` — abort 되면 in-flight seek/encode 마무리 후 break. 이미 emit 된 프레임은 그대로 store 에 남음. UI 의 "중지" 버튼이 이걸 트리거.
+
+### 9.4 단축키 (video 모드)
+
+- `Space`: 재생/일시정지
+- `C`: 현재 프레임 캡쳐
+- `←/→`: ±stepSec (`Shift` 와 함께 ±stepSec × 5)
 
 ---
 
@@ -235,8 +270,8 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 - sprite/object URL은 cleanup에서 revoke해 메모리 누수 방지
 - 무거운 작업은 worker/헬퍼 함수로 분리해 UI 인터랙션 블로킹 방지
 - 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
-- 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지)
-- 프레임 추출 컨트롤: `src/features/media/ui/frame-extract/ExtractionPanel.tsx`
+- 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지). video 모드일 땐 `Toolbar` 도 숨김.
+- 비디오 타임라인 + 추출 컨트롤은 `src/features/media/ui/BottomTimeline.tsx` 단일 컴포넌트가 담당. 양 모드 모두 하단에 동일하게 노출됨.
 
 ---
 

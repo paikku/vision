@@ -100,6 +100,13 @@ export type ExtractOptions = {
   /** Output JPEG quality 0..1. */
   quality?: number;
   onProgress?: (done: number, total: number) => void;
+  /** Emitted as soon as each frame is encoded so callers can stream them
+   *  into the store in real time. The same Frame is also included in the
+   *  resolved array. */
+  onFrame?: (frame: Frame) => void;
+  /** When aborted, the loop bails after the in-flight seek/encode and
+   *  returns whatever frames were already emitted via onFrame. */
+  signal?: AbortSignal;
 };
 
 /**
@@ -111,7 +118,7 @@ export async function extractFrames(
   opts: ExtractOptions,
 ): Promise<Frame[]> {
   if (media.kind !== "video") throw new Error("extractFrames expects a video");
-  const { times, quality = 0.92, onProgress } = opts;
+  const { times, quality = 0.92, onProgress, onFrame, signal } = opts;
   const video = document.createElement("video");
   video.src = media.url;
   video.muted = true;
@@ -131,15 +138,18 @@ export async function extractFrames(
 
   const frames: Frame[] = [];
   for (let i = 0; i < times.length; i++) {
+    if (signal?.aborted) break;
     const t = clamp(times[i], 0, (media.duration ?? video.duration) - 0.001);
     video.currentTime = t;
     await once(video, "seeked");
+    if (signal?.aborted) break;
     ctx.drawImage(video, 0, 0, w, h);
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/jpeg", quality),
     );
+    if (signal?.aborted) break;
     if (!blob) continue;
-    frames.push({
+    const frame: Frame = {
       id: uid(),
       mediaId: media.id,
       url: URL.createObjectURL(blob),
@@ -147,8 +157,10 @@ export async function extractFrames(
       height: h,
       timestamp: t,
       label: `${formatTime(t)}`,
-    });
+    };
+    frames.push(frame);
     onProgress?.(i + 1, times.length);
+    onFrame?.(frame);
   }
 
   video.removeAttribute("src");
