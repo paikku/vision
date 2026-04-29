@@ -269,7 +269,7 @@ storage/
 | GET/POST | `/api/projects/[id]/videos` | 비디오 목록·업로드(multipart) |
 | GET/DELETE | `/api/projects/[id]/videos/[vid]` | meta 조회·삭제(프레임 포함 재귀 정리) |
 | GET | `/api/projects/[id]/videos/[vid]/source` | 원본 비디오 스트림 |
-| GET/PUT | `/api/projects/[id]/videos/[vid]/data` | `data.json` 조회·저장 (**PUT은 classes+annotations만 덮어씀**, frames는 별도 엔드포인트로 관리) |
+| GET/PUT | `/api/projects/[id]/videos/[vid]/data` | `data.json` 조회·저장 (**PUT은 classes+annotations만 overlay**, frames는 별도 엔드포인트로 관리. RMW는 `mutateVideoData()`를 거쳐 동일 락 키로 직렬화됨 — §11.8 참고) |
 | POST | `/api/projects/[id]/videos/[vid]/frames` | 프레임 일괄 업로드(multipart, meta JSON + files) |
 | GET/DELETE | `/api/projects/[id]/videos/[vid]/frames/[fid]` | 프레임 이미지·삭제 |
 | POST | `/api/projects/[id]/videos/[vid]/previews` | hover-reel 썸네일 일괄 업로드 |
@@ -300,6 +300,8 @@ storage/
 2. **프레임 삭제**: store에서 빠진 frame id를 감지하면 `apiDeleteFrame()` 호출.
 3. **data.json 디바운스 저장**: classes/annotations 변경 시 500ms 디바운스 후 `saveVideoData()`. 프레임 배열은 여기서 보내지 않음 — `frames: []`로 명시해 별도 엔드포인트(POST/DELETE frames)와의 경쟁을 차단.
 
+**비디오 전환 안전장치**: `ProjectWorkspace`는 비디오 간 이동 시 같은 컴포넌트 인스턴스를 재사용하므로, `[projectId, videoId]` 의존성 effect가 매번 `knownFrameIdsRef`/`uploadingRef`/`saveTimerRef`를 초기화한다. 동시에 `generationRef`를 1 증가시켜, 이전 비디오 컨텍스트에서 시작된 in-flight 업로드/디바운스 저장이 await 후 완료될 때 `generationRef.current !== gen`으로 자기 자신을 감지하고 새 비디오의 store/refs를 건드리지 않게 막는다 (서버 쪽 쓰기는 그대로 진행 — 작업 손실 없음).
+
 ### 11.6 ProjectWorkspace 하이드레이션
 
 `ProjectWorkspace`는 마운트 시 `reset()` → `getVideoData()` → 비디오 파일을 blob으로 fetch해 `File` 생성 → `MediaSource` 조립 → `useStore.setState({ media, frames, annotations, classes, activeFrameId, activeClassId, centerViewMode })`. 서버에 classes가 없으면 기본 class 하나로 seed. 프레임 URL은 서버 URL이므로 cleanup의 revoke는 no-op, video blob URL만 실제로 revoke됨.
@@ -308,3 +310,16 @@ storage/
 
 - `storage/`는 `.gitignore` 대상.
 - `next.config.mjs`에서 `experimental.serverActions.bodySizeLimit = "2gb"`로 대용량 비디오 업로드 허용.
+
+### 11.8 동시성 모델 (storage.ts)
+
+여러 요청이 같은 인덱스 JSON에 동시에 read-modify-write를 하면 baseline 충돌로 항목이 silently 누락되던 버그가 있어, 모든 RMW 경로가 두 가지 가드를 거친다:
+
+1. **per-path in-process mutex (`withFileLock`)**: `Map<filePath, Promise>` 기반 직렬화 큐. 같은 파일 경로에 대한 mutator가 절대 겹치지 않게 한다. 락 entry는 tail이 settle되면 자동 정리되고, 한 mutator의 throw가 큐를 막지 않는다 (다음 작업은 `prev.catch(() => undefined).then(...)`로 잇는다). 적용 대상:
+   - `data.json` (`mutateVideoData`) — frames POST/DELETE, data PUT이 모두 같은 키
+   - `videos.json` — `createVideo`/`deleteVideo`
+   - `projects.json` — `createProject`/`deleteProject`
+   - `meta.json` — `writePreviews`
+2. **atomic write**: `writeJson()`은 `.tmp` 파일에 쓰고 `rename(tmp, target)`으로 교체. reader는 항상 이전 또는 새 내용만 보고 partial JSON은 절대 노출되지 않는다. mid-write 크래시도 `target` 자체는 손상되지 않음.
+
+`mutateVideoData(projectId, videoId, mutator)`가 권장 진입점. mutator는 `data`를 in-place 수정하고 값을 리턴하며, 리턴값이 정확히 `false`면 write를 스킵한다 (예: 삭제할 프레임이 이미 없는 경우 → no-op). 향후 DB로 옮기면 storage.ts 한 파일만 교체하면 되고 락도 함께 사라진다.
