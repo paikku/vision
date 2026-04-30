@@ -772,7 +772,7 @@ export function FrameExtractionPage({
               </div>
             )}
 
-            {/* Action row */}
+            {/* Action row — playback/capture on the left, range tools on the right */}
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <button
                 type="button"
@@ -785,23 +785,6 @@ export function FrameExtractionPage({
               <span className="tabular-nums text-[11px] text-[var(--color-muted)]">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
-              {range && (
-                <span className="tabular-nums text-[11px] text-[var(--color-muted)]">
-                  · 범위 {formatTime(range.start)}~{formatTime(range.end)} ({span.toFixed(2)}s · {framesInRange.length}프레임)
-                </span>
-              )}
-
-              <span className="mx-1 h-4 w-px bg-[var(--color-line)]" />
-
-              <button
-                type="button"
-                onClick={resetRange}
-                disabled={!duration}
-                className={BTN_DEFAULT}
-                title="범위를 전체 [0, duration]로 초기화"
-              >
-                범위 초기화
-              </button>
               <button
                 type="button"
                 onClick={() => seek(0)}
@@ -821,6 +804,34 @@ export function FrameExtractionPage({
                 현재 캡쳐
               </button>
 
+              <div className="flex items-center gap-1.5 rounded-md border border-[var(--color-line)] bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-text)]">
+                <span className="text-[11px] text-[var(--color-muted)]">step</span>
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={stepSec}
+                  onChange={(e) => setStepSec(Math.max(0.01, parseFloat(e.target.value) || 0))}
+                  className="w-14 bg-transparent text-center tabular-nums outline-none"
+                />
+                <span className="text-[11px] text-[var(--color-muted)]">s</span>
+              </div>
+
+              {/* Range tools — pushed to the right edge */}
+              {range && (
+                <span className="ml-auto tabular-nums text-[11px] text-[var(--color-muted)]">
+                  범위 {formatTime(range.start)}~{formatTime(range.end)} ({span.toFixed(2)}s · {framesInRange.length}프레임)
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={resetRange}
+                disabled={!duration}
+                className={`${BTN_DEFAULT}${range ? "" : " ml-auto"}`}
+                title="범위를 전체 [0, duration]로 초기화"
+              >
+                범위 초기화
+              </button>
               <div className="flex items-center gap-1.5 rounded-md border border-[var(--color-line)] bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-text)]">
                 <span className="text-[11px] text-[var(--color-muted)]">N초</span>
                 <input
@@ -853,20 +864,6 @@ export function FrameExtractionPage({
               >
                 균등캡쳐
               </button>
-
-              <div className="flex items-center gap-1.5 rounded-md border border-[var(--color-line)] bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-text)]">
-                <span className="text-[11px] text-[var(--color-muted)]">step</span>
-                <input
-                  type="number"
-                  min={0.01}
-                  step={0.01}
-                  value={stepSec}
-                  onChange={(e) => setStepSec(Math.max(0.01, parseFloat(e.target.value) || 0))}
-                  className="w-14 bg-transparent text-center tabular-nums outline-none"
-                />
-                <span className="text-[11px] text-[var(--color-muted)]">s</span>
-              </div>
-
             </div>
           </div>
         )}
@@ -1076,7 +1073,7 @@ function FrameStripRow({
       onClickCapture={onClickCapture}
       onMouseEnter={onRowMouseEnter}
       onMouseLeave={onRowMouseLeave}
-      className="relative select-none overflow-x-auto overflow-y-hidden px-3 pb-3"
+      className="relative select-none overflow-x-scroll overflow-y-hidden px-3 pb-3"
     >
       <div className="flex min-h-28 items-stretch gap-2">
         {frames.length === 0 ? (

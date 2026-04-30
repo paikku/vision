@@ -269,7 +269,7 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 **추출된 프레임 strip** (내부 `FrameStripRow`):
 - `framesInRange` 만 단일 행으로 노출 (범위 밖 프레임은 숨김). 빈 범위에도 placeholder 로 한 줄 자리 유지 (`min-h-28`).
-- **가로 스크롤**: 컨테이너에 native `wheel` 리스너(`{passive: false}`)를 부착해 `deltaY`/`deltaX` 중 절대값 큰 쪽을 `scrollLeft` 에 더하고 `preventDefault`. React 의 `onWheel` 은 passive 라 직접 등록이 필요.
+- **가로 스크롤**: `overflow-x: scroll` (auto 가 아니라 scroll) — 스크롤바 자리를 항상 reserve 해서 콘텐츠 폭이 바뀔 때 strip 높이가 점프하지 않게. 컨테이너에 native `wheel` 리스너(`{passive: false}`)를 부착해 `deltaY`/`deltaX` 중 절대값 큰 쪽을 `scrollLeft` 에 더하고 `preventDefault`. React 의 `onWheel` 은 passive 라 직접 등록이 필요.
 - **Hover = 시킹**: 카드 `onMouseEnter` 에서 그 timestamp 로 시킹. 줄 `onMouseEnter` 시 `getCurrentTime()` 을 `hoverRestoreRef` 에 한 번만 저장, 줄 `onMouseLeave` 시 그 값으로 복귀. range 핸들 드래그와 같은 save/restore 패턴.
 - **선택**: 클릭=토글, Shift+클릭=`lastClickedFrameIdRef` ↔ 현재 사이 범위 추가, 드래그 marquee=박스 안 batch toggle. ImagePool 과 동일한 패턴 — 컨테이너에 pointer-capture 안 잡고 document listener 사용 (§12.2). 좌표는 scroll-content 기준 (§12.3). 카드 `<img>` 는 `draggable={false}` (§12.4).
 - **marquee 드래그 중 hover 시킹 무시**: `draggingRef.current` 를 onMove 의 임계값 통과 시점에 true, onUp 에서 false. 카드 hover 핸들러가 이 ref 검사 후 skip.
@@ -279,7 +279,9 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 **sprite 프레임 마커 색**:
 - 우선순위 selected > inRange/outRange. **selected** = `bg-sky-400` + h-3 (다른 마커보다 살짝 김), **in-range** = `bg-amber-300` h-2, **out-of-range** = `bg-zinc-500` h-2. cursor 라인은 `bg-[var(--color-accent)]`.
 
-**액션 줄 범위 레이블**: `· 범위 0:00~0:10 (10.00s · N프레임)` — N = `framesInRange.length`. 액션 줄 좌측 버튼은 `[범위 초기화] [↺ 처음으로] [현재 캡쳐] [N초 입력] [균등캡쳐]` 순서로 정리 (삭제는 strip 헤더로 이동).
+**액션 줄 레이아웃**: 좌측 = 재생/캡쳐 도구 (`▶/⏸ · 현재시간/전체시간 · ↺ 처음으로 · 현재 캡쳐 · step`), 우측 = 범위 도구 (`범위 라벨 · 범위 초기화 · N초 입력 · 균등캡쳐`). 범위 라벨이 `ml-auto` 로 분리 — 범위 라벨이 없을 때(데이터 미로드)는 `범위 초기화` 가 그 역할을 대신. 좌·우 묶음은 `flex flex-wrap` 안에 있어 좁은 폭에서는 두 줄로 wrap 됨.
+
+**액션 줄 범위 레이블**: `범위 0:00~0:10 (10.00s · N프레임)` — N = `framesInRange.length`.
 
 **중복 timestamp 차단**:
 - 상수 `TIMESTAMP_DEDUPE_EPS = 0.008` (라벨링 store §11.x 의 dedup 과 동일).
