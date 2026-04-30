@@ -488,30 +488,16 @@ export function FrameExtractionPage({
           </div>
         )}
 
-        <div
-          className="flex flex-1 items-center justify-center bg-black"
-          onClick={() => {
-            // Click anywhere on the video preview surface = jump back to the
-            // start (and pause). The scrubber/range tracks below own the
-            // "seek to clicked position" interaction; the video surface itself
-            // intentionally only resets to t=0 to prevent accidental seeks
-            // while drawing on the timeline.
-            const v = videoRef.current;
-            if (!v) return;
-            v.pause();
-            v.currentTime = 0;
-          }}
-          title="클릭 = 비디오를 처음(0초)으로 되돌림"
-        >
+        <div className="flex flex-1 items-center justify-center bg-black">
           {media ? (
             <video
               ref={videoRef}
               src={media.url}
-              controls={false}
+              controls
               playsInline
               muted
               crossOrigin="anonymous"
-              className="max-h-[60vh] max-w-full cursor-pointer"
+              className="max-h-[60vh] max-w-full"
             />
           ) : (
             <div className="text-xs text-[var(--color-muted)]">불러오는 중…</div>
@@ -641,6 +627,15 @@ export function FrameExtractionPage({
                 title="범위를 전체 [0, duration]로 초기화"
               >
                 초기화
+              </button>
+              <button
+                type="button"
+                onClick={() => seek(0)}
+                disabled={!duration}
+                className={BTN_DEFAULT}
+                title="비디오를 0초로 되돌림"
+              >
+                ↺ 처음으로
               </button>
               <button
                 type="button"

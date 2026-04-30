@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   bulkTagImages,
   imageBytesUrl,
@@ -11,6 +11,13 @@ import { TagInput } from "./TagInput";
 
 const PAGE_SIZE = 100;
 const NO_TAG_KEY = "__no_tag__";
+// Cap each grid scroller at ~3 rows of 96px thumbnails (gap-2 = 8px). The
+// pool view stays compact regardless of view mode; if more rows are needed
+// the user scrolls inside the grid.
+const GRID_MAX_HEIGHT = "max-h-[336px]";
+// Minimum drag distance before pointerdown→up is treated as a marquee
+// instead of a click. Below this we let the card's onClick fire.
+const MARQUEE_THRESHOLD = 4;
 
 type ViewMode = "all" | "by_resource" | "by_tag" | "matrix";
 
@@ -172,6 +179,26 @@ export function ImagePool({
   const selectAllResults = () => selectIds(filtered.map((i) => i.id), true);
   const clearSelection = () => onSelectionChange({ ids: new Set() });
 
+  /**
+   * Marquee batch behavior: if any image inside the box is currently
+   * unselected, select the whole box; otherwise (every image is already
+   * selected) deselect the whole box. Empty boxes are no-ops.
+   */
+  const marqueeBatchToggle = useCallback(
+    (idsInBox: string[]) => {
+      if (idsInBox.length === 0) return;
+      const allSelected = idsInBox.every((id) => selection.ids.has(id));
+      const next = new Set(selection.ids);
+      if (allSelected) {
+        for (const id of idsInBox) next.delete(id);
+      } else {
+        for (const id of idsInBox) next.add(id);
+      }
+      onSelectionChange({ ids: next });
+    },
+    [selection.ids, onSelectionChange],
+  );
+
   return (
     <section className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-line)] px-3 py-2">
@@ -324,6 +351,7 @@ export function ImagePool({
             images={visible}
             selection={selection}
             onToggle={toggle}
+            onMarqueeBatchToggle={marqueeBatchToggle}
           />
         ) : viewMode === "by_resource" ? (
           <div className="space-y-4">
@@ -336,6 +364,7 @@ export function ImagePool({
                 selection={selection}
                 onToggle={toggle}
                 onSelectAll={() => selectIds(group.images.map((i) => i.id), true)}
+                onMarqueeBatchToggle={marqueeBatchToggle}
               />
             ))}
           </div>
@@ -351,6 +380,7 @@ export function ImagePool({
                 selection={selection}
                 onToggle={toggle}
                 onSelectAll={() => selectIds(group.images.map((i) => i.id), true)}
+                onMarqueeBatchToggle={marqueeBatchToggle}
               />
             ))}
           </div>
@@ -408,23 +438,142 @@ function ImageGrid({
   images,
   selection,
   onToggle,
+  onMarqueeBatchToggle,
 }: {
   projectId: string;
   images: Image[];
   selection: ImageSelection;
   onToggle: (id: string) => void;
+  /**
+   * Called when the user releases a marquee-drag. Receives the ids inside
+   * the box. The pool decides batch behavior (currently: if any of the box
+   * is unselected, select all; otherwise deselect all).
+   */
+  onMarqueeBatchToggle: (idsInBox: string[]) => void;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const draggedRef = useRef(false);
+  const clickGuardRef = useRef(false);
+  const [marquee, setMarquee] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // Only react to primary button.
+    if (e.button !== 0) return;
+    const el = containerRef.current;
+    if (!el) return;
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    draggedRef.current = false;
+    el.setPointerCapture(e.pointerId);
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const start = dragStartRef.current;
+    const el = containerRef.current;
+    if (!start || !el) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (!draggedRef.current && Math.hypot(dx, dy) < MARQUEE_THRESHOLD) return;
+    draggedRef.current = true;
+    const rect = el.getBoundingClientRect();
+    const x0 = start.x - rect.left;
+    const y0 = start.y - rect.top;
+    const x1 = e.clientX - rect.left;
+    const y1 = e.clientY - rect.top;
+    setMarquee({
+      left: Math.min(x0, x1),
+      top: Math.min(y0, y1),
+      width: Math.abs(x1 - x0),
+      height: Math.abs(y1 - y0),
+    });
+  }, []);
+
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = containerRef.current;
+      if (el && el.hasPointerCapture(e.pointerId)) {
+        el.releasePointerCapture(e.pointerId);
+      }
+      if (!draggedRef.current) {
+        // Below threshold → treat as a click; let card onClick run.
+        dragStartRef.current = null;
+        return;
+      }
+      const box = marquee;
+      if (el && box && (box.width > 0 || box.height > 0)) {
+        const rect = el.getBoundingClientRect();
+        const ax = rect.left + box.left;
+        const ay = rect.top + box.top;
+        const bx = ax + box.width;
+        const by = ay + box.height;
+        const hits: string[] = [];
+        const cards = el.querySelectorAll<HTMLElement>("[data-image-id]");
+        cards.forEach((card) => {
+          const r = card.getBoundingClientRect();
+          if (r.right < ax || r.left > bx || r.bottom < ay || r.top > by) {
+            return;
+          }
+          const id = card.dataset.imageId;
+          if (id) hits.push(id);
+        });
+        if (hits.length > 0) onMarqueeBatchToggle(hits);
+      }
+      // Suppress the click that follows pointerup on whichever card
+      // the gesture started on.
+      clickGuardRef.current = true;
+      dragStartRef.current = null;
+      draggedRef.current = false;
+      setMarquee(null);
+    },
+    [marquee, onMarqueeBatchToggle],
+  );
+
+  const onClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (clickGuardRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      clickGuardRef.current = false;
+    }
+  }, []);
+
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2">
-      {images.map((img) => (
-        <ImageCard
-          key={img.id}
-          projectId={projectId}
-          image={img}
-          selected={selection.ids.has(img.id)}
-          onToggle={() => onToggle(img.id)}
+    <div
+      ref={containerRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onClickCapture={onClickCapture}
+      className={`relative overflow-y-auto ${GRID_MAX_HEIGHT} select-none`}
+    >
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2 p-0.5">
+        {images.map((img) => (
+          <ImageCard
+            key={img.id}
+            projectId={projectId}
+            image={img}
+            selected={selection.ids.has(img.id)}
+            onToggle={() => onToggle(img.id)}
+          />
+        ))}
+      </div>
+      {marquee && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute rounded-sm border border-[var(--color-accent)] bg-[var(--color-accent)]/15"
+          style={{
+            left: marquee.left,
+            top: marquee.top,
+            width: marquee.width,
+            height: marquee.height,
+          }}
         />
-      ))}
+      )}
     </div>
   );
 }
@@ -443,6 +592,7 @@ function ImageCard({
   return (
     <button
       type="button"
+      data-image-id={image.id}
       onClick={onToggle}
       title={image.fileName}
       className={[
@@ -486,6 +636,7 @@ function ByResourceGroup({
   selection,
   onToggle,
   onSelectAll,
+  onMarqueeBatchToggle,
 }: {
   projectId: string;
   resource: ResourceSummary | undefined;
@@ -493,6 +644,7 @@ function ByResourceGroup({
   selection: ImageSelection;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
+  onMarqueeBatchToggle: (idsInBox: string[]) => void;
 }) {
   return (
     <div>
@@ -523,12 +675,15 @@ function ByResourceGroup({
           이 그룹 전체 선택
         </button>
       </div>
-      <ImageGrid
-        projectId={projectId}
-        images={images}
-        selection={selection}
-        onToggle={onToggle}
-      />
+      <div className="ml-2 border-l border-[var(--color-line)] pl-3">
+        <ImageGrid
+          projectId={projectId}
+          images={images}
+          selection={selection}
+          onToggle={onToggle}
+          onMarqueeBatchToggle={onMarqueeBatchToggle}
+        />
+      </div>
     </div>
   );
 }
@@ -541,6 +696,7 @@ function ByTagGroup({
   selection,
   onToggle,
   onSelectAll,
+  onMarqueeBatchToggle,
 }: {
   projectId: string;
   tag: string;
@@ -549,6 +705,7 @@ function ByTagGroup({
   selection: ImageSelection;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
+  onMarqueeBatchToggle: (idsInBox: string[]) => void;
 }) {
   const isUntagged = tag === NO_TAG_KEY;
   return (
@@ -575,12 +732,15 @@ function ByTagGroup({
           이 그룹 전체 선택
         </button>
       </div>
-      <ImageGrid
-        projectId={projectId}
-        images={images}
-        selection={selection}
-        onToggle={onToggle}
-      />
+      <div className="ml-2 border-l border-[var(--color-line)] pl-3">
+        <ImageGrid
+          projectId={projectId}
+          images={images}
+          selection={selection}
+          onToggle={onToggle}
+          onMarqueeBatchToggle={onMarqueeBatchToggle}
+        />
+      </div>
     </div>
   );
 }
@@ -607,7 +767,7 @@ function MatrixView({
     );
   }
   return (
-    <div className="overflow-x-auto">
+    <div className={`overflow-auto ${GRID_MAX_HEIGHT}`}>
       <table className="w-full text-[11px]">
         <thead>
           <tr>
