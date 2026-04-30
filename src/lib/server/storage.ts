@@ -418,6 +418,29 @@ export async function readResourceSource(
   }
 }
 
+/**
+ * Return the on-disk path + total size + ext for a video Resource's source
+ * file. Used by the streaming source endpoint so it can serve HTTP Range
+ * requests without reading the entire file into memory. Browsers require
+ * Range support to seek inside <video>; without it, clicking the scrubber
+ * (or any scripted `currentTime` write) fails silently.
+ */
+export async function statResourceSource(
+  projectId: string,
+  resourceId: string,
+): Promise<{ path: string; size: number; ext: string } | null> {
+  const r = await getResource(projectId, resourceId);
+  if (!r || r.type !== "video" || !r.sourceExt) return null;
+  const p = path.join(resourceDir(projectId, resourceId), `source.${r.sourceExt}`);
+  try {
+    const st = await fs.stat(p);
+    return { path: p, size: st.size, ext: r.sourceExt };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
 // ---------- previews (video resource hover-reel thumbnails) ----------
 
 function previewPath(

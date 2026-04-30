@@ -452,85 +452,98 @@ function ImageGrid({
   onMarqueeBatchToggle: (idsInBox: string[]) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
-  const draggedRef = useRef(false);
-  const clickGuardRef = useRef(false);
+  // Marquee position is stored in scroll-content coords (i.e. it includes
+  // scrollTop/scrollLeft) so the absolute-positioned overlay stays glued to
+  // the dragged region even if the user scrolls during the drag.
   const [marquee, setMarquee] = useState<{
     left: number;
     top: number;
     width: number;
     height: number;
   } | null>(null);
+  const clickGuardRef = useRef(false);
 
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    // Only react to primary button.
-    if (e.button !== 0) return;
-    const el = containerRef.current;
-    if (!el) return;
-    dragStartRef.current = { x: e.clientX, y: e.clientY };
-    draggedRef.current = false;
-    el.setPointerCapture(e.pointerId);
-  }, []);
-
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const start = dragStartRef.current;
-    const el = containerRef.current;
-    if (!start || !el) return;
-    const dx = e.clientX - start.x;
-    const dy = e.clientY - start.y;
-    if (!draggedRef.current && Math.hypot(dx, dy) < MARQUEE_THRESHOLD) return;
-    draggedRef.current = true;
-    const rect = el.getBoundingClientRect();
-    const x0 = start.x - rect.left;
-    const y0 = start.y - rect.top;
-    const x1 = e.clientX - rect.left;
-    const y1 = e.clientY - rect.top;
-    setMarquee({
-      left: Math.min(x0, x1),
-      top: Math.min(y0, y1),
-      width: Math.abs(x1 - x0),
-      height: Math.abs(y1 - y0),
-    });
-  }, []);
-
-  const onPointerUp = useCallback(
+  const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
       const el = containerRef.current;
-      if (el && el.hasPointerCapture(e.pointerId)) {
-        el.releasePointerCapture(e.pointerId);
-      }
-      if (!draggedRef.current) {
-        // Below threshold → treat as a click; let card onClick run.
-        dragStartRef.current = null;
-        return;
-      }
-      const box = marquee;
-      if (el && box && (box.width > 0 || box.height > 0)) {
-        const rect = el.getBoundingClientRect();
-        const ax = rect.left + box.left;
-        const ay = rect.top + box.top;
-        const bx = ax + box.width;
-        const by = ay + box.height;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const startX = e.clientX - rect.left + el.scrollLeft;
+      const startY = e.clientY - rect.top + el.scrollTop;
+      // We deliberately do NOT call setPointerCapture here. Capturing on
+      // the container would redirect pointerup → click events to the
+      // container instead of the underlying card button, breaking single
+      // click toggle. Document-level listeners give us the same "track
+      // even if pointer leaves the container" guarantee without that.
+      let dragged = false;
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== e.pointerId) return;
+        const r = el.getBoundingClientRect();
+        const curX = ev.clientX - r.left + el.scrollLeft;
+        const curY = ev.clientY - r.top + el.scrollTop;
+        if (!dragged) {
+          if (
+            Math.hypot(curX - startX, curY - startY) < MARQUEE_THRESHOLD
+          ) {
+            return;
+          }
+          dragged = true;
+        }
+        setMarquee({
+          left: Math.min(startX, curX),
+          top: Math.min(startY, curY),
+          width: Math.abs(curX - startX),
+          height: Math.abs(curY - startY),
+        });
+      };
+
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== e.pointerId) return;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+        if (!dragged) {
+          // Below the movement threshold: real click — let the card's
+          // onClick fire normally.
+          return;
+        }
+        const r = el.getBoundingClientRect();
+        const curX = ev.clientX - r.left + el.scrollLeft;
+        const curY = ev.clientY - r.top + el.scrollTop;
+        const ax = Math.min(startX, curX);
+        const ay = Math.min(startY, curY);
+        const bx = Math.max(startX, curX);
+        const by = Math.max(startY, curY);
+        // Hit-test cards via their content-box coordinates inside the
+        // scroll container, so cards currently outside the visible
+        // viewport (but inside the marquee) still register.
         const hits: string[] = [];
         const cards = el.querySelectorAll<HTMLElement>("[data-image-id]");
         cards.forEach((card) => {
-          const r = card.getBoundingClientRect();
-          if (r.right < ax || r.left > bx || r.bottom < ay || r.top > by) {
-            return;
-          }
+          const cr = card.getBoundingClientRect();
+          const cAx = cr.left - r.left + el.scrollLeft;
+          const cAy = cr.top - r.top + el.scrollTop;
+          const cBx = cAx + cr.width;
+          const cBy = cAy + cr.height;
+          if (cBx < ax || cAx > bx || cBy < ay || cAy > by) return;
           const id = card.dataset.imageId;
           if (id) hits.push(id);
         });
         if (hits.length > 0) onMarqueeBatchToggle(hits);
-      }
-      // Suppress the click that follows pointerup on whichever card
-      // the gesture started on.
-      clickGuardRef.current = true;
-      dragStartRef.current = null;
-      draggedRef.current = false;
-      setMarquee(null);
+        // Swallow the click that the browser will synthesize on the
+        // pointerdown target so the drag doesn't also flip that single
+        // card's selection.
+        clickGuardRef.current = true;
+        setMarquee(null);
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
     },
-    [marquee, onMarqueeBatchToggle],
+    [onMarqueeBatchToggle],
   );
 
   const onClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -545,9 +558,6 @@ function ImageGrid({
     <div
       ref={containerRef}
       onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
       onClickCapture={onClickCapture}
       className={`relative overflow-y-auto ${GRID_MAX_HEIGHT} select-none`}
     >

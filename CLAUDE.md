@@ -334,7 +334,7 @@ storage/
 | GET/DELETE | `/api/projects/[id]` | detail·삭제 |
 | GET/POST | `/api/projects/[id]/resources` | Resource 목록·생성(multipart, video 파일 포함) |
 | GET/PATCH/DELETE | `/api/projects/[id]/resources/[rid]` | meta 조회·이름/태그 수정·삭제(자식 Image 까지 cascade) |
-| GET | `/api/projects/[id]/resources/[rid]/source` | 원본 비디오 스트림 |
+| GET | `/api/projects/[id]/resources/[rid]/source` | 원본 비디오 스트림. **HTTP Range 요청 지원**(206 Partial Content + `accept-ranges: bytes`). 브라우저는 Range 응답이 없으면 `<video>` 시킹을 silently 무시하므로 필수. `fs.createReadStream(start, end)` 으로 streaming. |
 | POST/GET | `/api/projects/[id]/resources/[rid]/previews(/[idx])` | hover-reel 썸네일 |
 | POST | `/api/projects/[id]/resources/[rid]/images` | Resource 에 Image 일괄 추가 (frame 추출 결과 포함) |
 | GET | `/api/projects/[id]/images?resourceId=&source=&tag=` | Image 목록 (필터) |
