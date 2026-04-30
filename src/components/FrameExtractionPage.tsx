@@ -725,7 +725,7 @@ export function FrameExtractionPage({
               </span>
               {range && (
                 <span className="tabular-nums text-[11px] text-[var(--color-muted)]">
-                  · 범위 {formatTime(range.start)}~{formatTime(range.end)} ({span.toFixed(2)}s)
+                  · 범위 {formatTime(range.start)}~{formatTime(range.end)} ({span.toFixed(2)}s · {framesInRange.length}프레임)
                 </span>
               )}
 
@@ -834,14 +834,6 @@ export function FrameExtractionPage({
                 선택 해제 ({selectedFrameIds.size})
               </button>
             )}
-            {frames.length > 0 && (
-              <Link
-                href={`/projects/${projectId}`}
-                className="ml-auto text-[11px] text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-              >
-                Media Library 에서 라벨링 시작 →
-              </Link>
-            )}
           </div>
           <FrameStripRow
             projectId={projectId}
@@ -850,6 +842,7 @@ export function FrameExtractionPage({
             onToggle={toggleFrameSelection}
             onMarqueeBatchToggle={marqueeBatchToggleFrames}
             onSeekFrame={seek}
+            getCurrentTime={() => videoRef.current?.currentTime ?? 0}
           />
         </section>
       </main>
@@ -864,6 +857,7 @@ function FrameStripRow({
   onToggle,
   onMarqueeBatchToggle,
   onSeekFrame,
+  getCurrentTime,
 }: {
   projectId: string;
   frames: Image[];
@@ -871,6 +865,7 @@ function FrameStripRow({
   onToggle: (id: string, shiftKey: boolean) => void;
   onMarqueeBatchToggle: (idsInBox: string[]) => void;
   onSeekFrame: (t: number) => void;
+  getCurrentTime: () => number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [marquee, setMarquee] = useState<{
@@ -880,6 +875,29 @@ function FrameStripRow({
     height: number;
   } | null>(null);
   const clickGuardRef = useRef(false);
+  // True while a marquee drag is active. Used to suppress hover-seek while
+  // the mouse is sweeping over cards as part of a drag.
+  const draggingRef = useRef(false);
+  // Saved playback time captured the first time the mouse entered the row,
+  // restored when it leaves. null = currently not hovering the row.
+  const hoverRestoreRef = useRef<number | null>(null);
+
+  // Translate vertical mouse-wheel deltas to horizontal scroll. React's
+  // synthetic onWheel is passive in modern React, so we attach a native
+  // listener to be able to preventDefault and absorb the page's vertical
+  // scroll while the cursor is over the strip.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      if (delta === 0) return;
+      e.preventDefault();
+      el.scrollLeft += delta;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -901,6 +919,7 @@ function FrameStripRow({
             return;
           }
           dragged = true;
+          draggingRef.current = true;
         }
         setMarquee({
           left: Math.min(startX, curX),
@@ -915,6 +934,7 @@ function FrameStripRow({
         document.removeEventListener("pointermove", onMove);
         document.removeEventListener("pointerup", onUp);
         document.removeEventListener("pointercancel", onUp);
+        draggingRef.current = false;
         if (!dragged) return;
         const r = el.getBoundingClientRect();
         const curX = ev.clientX - r.left + el.scrollLeft;
@@ -955,11 +975,34 @@ function FrameStripRow({
     }
   }, []);
 
+  const onRowMouseEnter = useCallback(() => {
+    if (hoverRestoreRef.current === null) {
+      hoverRestoreRef.current = getCurrentTime();
+    }
+  }, [getCurrentTime]);
+
+  const onRowMouseLeave = useCallback(() => {
+    if (hoverRestoreRef.current !== null) {
+      onSeekFrame(hoverRestoreRef.current);
+      hoverRestoreRef.current = null;
+    }
+  }, [onSeekFrame]);
+
+  const onCardHover = useCallback(
+    (ts: number) => {
+      if (draggingRef.current) return;
+      onSeekFrame(ts);
+    },
+    [onSeekFrame],
+  );
+
   return (
     <div
       ref={containerRef}
       onPointerDown={onPointerDown}
       onClickCapture={onClickCapture}
+      onMouseEnter={onRowMouseEnter}
+      onMouseLeave={onRowMouseLeave}
       className="relative select-none overflow-x-auto overflow-y-hidden px-3 pb-3"
     >
       <div className="flex min-h-28 items-stretch gap-2">
@@ -977,9 +1020,9 @@ function FrameStripRow({
                 type="button"
                 data-frame-id={f.id}
                 onClick={(e) => onToggle(f.id, e.shiftKey)}
-                onDoubleClick={() => onSeekFrame(ts)}
+                onMouseEnter={() => onCardHover(ts)}
                 onDragStart={(e) => e.preventDefault()}
-                title={`${f.fileName} · ${formatTime(ts)} (클릭=선택, Shift+클릭=범위, 더블클릭=시킹)`}
+                title={`${f.fileName} · ${formatTime(ts)} (hover=시킹, 클릭=선택, Shift+클릭=범위)`}
                 className={[
                   "group relative h-24 w-24 shrink-0 overflow-hidden rounded-md border bg-black transition",
                   selected
