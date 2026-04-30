@@ -1,4 +1,4 @@
-import { ProjectDetailPage } from "@/components/ProjectDetailPage";
+import { MediaLibraryPage } from "@/components/MediaLibraryPage";
 
 export default async function Page({
   params,
@@ -6,5 +6,5 @@ export default async function Page({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <ProjectDetailPage projectId={id} />;
+  return <MediaLibraryPage projectId={id} />;
 }

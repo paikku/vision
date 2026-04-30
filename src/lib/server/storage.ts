@@ -2,27 +2,59 @@ import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 
+import type {
+  Image,
+  ImageFilter,
+  ImageSource,
+  VideoFrameMeta,
+} from "@/features/images/types";
+import type {
+  LabelSet,
+  LabelSetAnnotations,
+  LabelSetSummary,
+  LabelSetType,
+  LabelClass,
+} from "@/features/labelsets/types";
+import type {
+  Resource,
+  ResourceSummary,
+  ResourceType,
+} from "@/features/resources/types";
+import type { Project, ProjectSummary } from "@/features/projects/types";
+
 /**
- * Local filesystem storage for projects/videos/frames.
+ * Local filesystem storage for the new Resource / Image / LabelSet model.
  *
- * Layout (all under STORAGE_ROOT):
- *   projects.json                           list of ProjectSummary
+ * Layout (all under STORAGE_ROOT, no migration from prior schema):
+ *
+ *   projects.json                         { projects: string[] }
  *   {projectId}/
- *     project.json                          { id, name, createdAt, members }
- *     videos.json                           VideoSummary[]
- *     {videoId}/
- *       meta.json                           VideoMeta
- *       source.<ext>                        original/normalized video bytes
- *       data.json                           { classes, frames[], annotations[] }
- *       frames/
- *         {frameId}.jpg                     frame image
+ *     project.json                        Project
+ *     resources.json                      string[] (resource ids)
+ *     images.json                         string[] (image ids)
+ *     labelsets.json                      string[] (labelset ids)
+ *     resources/
+ *       {resourceId}/
+ *         meta.json                       Resource
+ *         source.<ext>                    video resource only
+ *         previews/preview-{i}.jpg        video resource only
+ *     images/
+ *       {imageId}/
+ *         meta.json                       Image
+ *         bytes.<ext>                     image bytes
+ *     labelsets/
+ *       {labelsetId}/
+ *         meta.json                       LabelSet
+ *         annotations.json                LabelSetAnnotations
  *
- * This is a placeholder for DB persistence - all reads/writes go through
- * this module so a future swap is a single-file change.
+ * All reads/writes go through this module so a future DB swap is a
+ * single-file change.
  */
 
 export const STORAGE_ROOT = path.join(process.cwd(), "storage");
 const PROJECTS_INDEX = path.join(STORAGE_ROOT, "projects.json");
+
+// ---------- low-level helpers ----------
 
 async function ensureDir(p: string): Promise<void> {
   await fs.mkdir(p, { recursive: true });
@@ -38,9 +70,9 @@ async function readJson<T>(p: string, fallback: T): Promise<T> {
   }
 }
 
-// Crash-safe write: stage to a sibling tmp file, fsync if available, then
-// rename onto the target. A reader that opens the file mid-write will either
-// see the previous contents or the new contents — never a partial JSON.
+// Crash-safe write: stage to a sibling tmp file, then rename onto the target.
+// A reader that opens the file mid-write will either see the previous contents
+// or the new contents — never a partial JSON.
 async function writeJson(p: string, value: unknown): Promise<void> {
   await ensureDir(path.dirname(p));
   const tmp = `${p}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
@@ -53,19 +85,9 @@ async function writeJson(p: string, value: unknown): Promise<void> {
   }
 }
 
-// ---------- per-file mutex ----------
-//
-// Multiple concurrent requests can land in the same Next.js node process and
-// race on the small JSON index files (projects.json, videos.json, data.json,
-// meta.json). All of those are read-modify-write, so naive concurrent access
-// drops entries: if two writers each read the same baseline and write back
-// independently, the second write clobbers the first.
-//
-// Every RMW path here funnels through `withFileLock(path, fn)`, which
-// serializes work per-path through a single shared promise chain. The chain
-// entry is replaced atomically and cleared once the tail settles, so an idle
-// path doesn't leak a Map entry. This is in-process only; there is one Next
-// node process so that is sufficient.
+// Per-path mutex: serializes RMW on the same file across concurrent requests
+// landing in this Next.js node process. Naive concurrent access drops entries
+// because two writers can each read the same baseline and clobber each other.
 const fileLocks = new Map<string, Promise<unknown>>();
 
 async function withFileLock<T>(
@@ -81,98 +103,6 @@ async function withFileLock<T>(
       if (fileLocks.get(filePath) === next) fileLocks.delete(filePath);
     });
   return next;
-}
-
-export type ProjectSummary = {
-  id: string;
-  name: string;
-  createdAt: number;
-  videoCount: number;
-  annotationCount: number;
-  frameCount: number;
-};
-
-export type ProjectMember = { id: string; name: string; role: string };
-
-export type Project = {
-  id: string;
-  name: string;
-  createdAt: number;
-  members: ProjectMember[];
-};
-
-export type VideoMeta = {
-  id: string;
-  name: string;
-  kind: "video" | "image";
-  width: number;
-  height: number;
-  duration?: number;
-  ingestVia?: "original" | "ffmpeg-wasm" | "server";
-  sourceExt: string;
-  /** Number of preview thumbnails on disk (preview-0.jpg ... preview-{n-1}.jpg). */
-  previewCount?: number;
-  createdAt: number;
-};
-
-export type VideoSummary = VideoMeta & {
-  frameCount: number;
-  annotationCount: number;
-};
-
-export type StoredFrame = {
-  id: string;
-  videoId: string;
-  width: number;
-  height: number;
-  timestamp?: number;
-  label: string;
-  ext: string;
-  createdAt: number;
-};
-
-export type StoredRectShape = {
-  kind: "rect";
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-};
-export type StoredPolygonShape = {
-  kind: "polygon";
-  rings: { x: number; y: number }[][];
-};
-export type StoredShape = StoredRectShape | StoredPolygonShape;
-
-export type StoredAnnotation = {
-  id: string;
-  frameId: string;
-  classId: string;
-  shape: StoredShape;
-  createdAt: number;
-};
-
-export type StoredLabelClass = {
-  id: string;
-  name: string;
-  color: string;
-  shortcutKey?: "q" | "w" | "e" | "r";
-};
-
-export type VideoData = {
-  classes: StoredLabelClass[];
-  frames: StoredFrame[];
-  annotations: StoredAnnotation[];
-};
-
-function projectDir(id: string): string {
-  return path.join(STORAGE_ROOT, safeId(id));
-}
-function videoDir(projectId: string, videoId: string): string {
-  return path.join(projectDir(projectId), safeId(videoId));
-}
-function framesDir(projectId: string, videoId: string): string {
-  return path.join(videoDir(projectId, videoId), "frames");
 }
 
 /**
@@ -191,7 +121,55 @@ export function genId(): string {
   return randomUUID();
 }
 
-// ---------- projects ----------
+// ---------- path builders ----------
+
+function projectDir(id: string): string {
+  return path.join(STORAGE_ROOT, safeId(id));
+}
+function projectFile(id: string): string {
+  return path.join(projectDir(id), "project.json");
+}
+function resourcesIndexPath(projectId: string): string {
+  return path.join(projectDir(projectId), "resources.json");
+}
+function imagesIndexPath(projectId: string): string {
+  return path.join(projectDir(projectId), "images.json");
+}
+function labelsetsIndexPath(projectId: string): string {
+  return path.join(projectDir(projectId), "labelsets.json");
+}
+function resourceDir(projectId: string, resourceId: string): string {
+  return path.join(projectDir(projectId), "resources", safeId(resourceId));
+}
+function imageDir(projectId: string, imageId: string): string {
+  return path.join(projectDir(projectId), "images", safeId(imageId));
+}
+function labelSetDir(projectId: string, labelSetId: string): string {
+  return path.join(projectDir(projectId), "labelsets", safeId(labelSetId));
+}
+
+// ---------- ext / mime ----------
+
+export function mimeForExt(ext: string): string {
+  const e = ext.toLowerCase();
+  if (e === "mp4" || e === "m4v") return "video/mp4";
+  if (e === "webm") return "video/webm";
+  if (e === "mov") return "video/quicktime";
+  if (e === "mkv") return "video/x-matroska";
+  if (e === "jpg" || e === "jpeg") return "image/jpeg";
+  if (e === "png") return "image/png";
+  if (e === "webp") return "image/webp";
+  return "application/octet-stream";
+}
+
+export function extFromName(name: string, fallback: string): string {
+  const m = /\.([a-zA-Z0-9]+)$/.exec(name);
+  return (m?.[1] ?? fallback).toLowerCase();
+}
+
+// ============================================================
+// Projects
+// ============================================================
 
 export async function listProjects(): Promise<ProjectSummary[]> {
   const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
@@ -202,7 +180,7 @@ export async function listProjects(): Promise<ProjectSummary[]> {
     try {
       summaries.push(await getProjectSummary(id));
     } catch {
-      // skip broken/missing entries silently
+      // skip broken entries silently
     }
   }
   summaries.sort((a, b) => b.createdAt - a.createdAt);
@@ -210,10 +188,8 @@ export async function listProjects(): Promise<ProjectSummary[]> {
 }
 
 export async function getProject(id: string): Promise<Project | null> {
-  const p = path.join(projectDir(id), "project.json");
   try {
-    const raw = await fs.readFile(p, "utf-8");
-    return JSON.parse(raw) as Project;
+    return JSON.parse(await fs.readFile(projectFile(id), "utf-8")) as Project;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
@@ -223,14 +199,18 @@ export async function getProject(id: string): Promise<Project | null> {
 async function getProjectSummary(id: string): Promise<ProjectSummary> {
   const proj = await getProject(id);
   if (!proj) throw new Error("project not found");
-  const videos = await listVideos(id);
+  const [resources, images, labelsets] = await Promise.all([
+    readIndex(resourcesIndexPath(id)),
+    readIndex(imagesIndexPath(id)),
+    readIndex(labelsetsIndexPath(id)),
+  ]);
   return {
     id: proj.id,
     name: proj.name,
     createdAt: proj.createdAt,
-    videoCount: videos.length,
-    annotationCount: videos.reduce((n, v) => n + v.annotationCount, 0),
-    frameCount: videos.reduce((n, v) => n + v.frameCount, 0),
+    resourceCount: resources.length,
+    imageCount: images.length,
+    labelSetCount: labelsets.length,
   };
 }
 
@@ -243,8 +223,10 @@ export async function createProject(name: string): Promise<Project> {
     members: [],
   };
   await ensureDir(projectDir(id));
-  await writeJson(path.join(projectDir(id), "project.json"), project);
-  await writeJson(path.join(projectDir(id), "videos.json"), []);
+  await writeJson(projectFile(id), project);
+  await writeJson(resourcesIndexPath(id), []);
+  await writeJson(imagesIndexPath(id), []);
+  await writeJson(labelsetsIndexPath(id), []);
   await withFileLock(PROJECTS_INDEX, async () => {
     const index = await readJson<{ projects: string[] }>(PROJECTS_INDEX, {
       projects: [],
@@ -266,232 +248,213 @@ export async function deleteProject(id: string): Promise<void> {
   await fs.rm(projectDir(id), { recursive: true, force: true });
 }
 
-// ---------- videos ----------
+// ============================================================
+// Generic id-index helpers
+// ============================================================
 
-function videosIndexPath(projectId: string): string {
-  return path.join(projectDir(projectId), "videos.json");
+async function readIndex(p: string): Promise<string[]> {
+  return readJson<string[]>(p, []);
 }
 
-async function readVideosIndex(projectId: string): Promise<string[]> {
-  const raw = await readJson<string[]>(videosIndexPath(projectId), []);
-  return raw;
-}
-async function writeVideosIndex(projectId: string, ids: string[]): Promise<void> {
-  await writeJson(videosIndexPath(projectId), ids);
+async function appendToIndex(p: string, id: string): Promise<void> {
+  await withFileLock(p, async () => {
+    const ids = await readIndex(p);
+    if (!ids.includes(id)) ids.push(id);
+    await writeJson(p, ids);
+  });
 }
 
-export async function listVideos(projectId: string): Promise<VideoSummary[]> {
-  const ids = await readVideosIndex(projectId);
-  const out: VideoSummary[] = [];
+async function removeFromIndex(p: string, id: string): Promise<void> {
+  await withFileLock(p, async () => {
+    const ids = await readIndex(p);
+    await writeJson(
+      p,
+      ids.filter((x) => x !== id),
+    );
+  });
+}
+
+// ============================================================
+// Resources
+// ============================================================
+
+export type CreateVideoResourceInput = {
+  type: "video";
+  name: string;
+  tags?: string[];
+  sourceExt: string;
+  sourceBuffer: Buffer;
+  width: number;
+  height: number;
+  duration?: number;
+  ingestVia?: "original" | "ffmpeg-wasm" | "server";
+};
+
+export type CreateImageBatchResourceInput = {
+  type: "image_batch";
+  name: string;
+  tags?: string[];
+};
+
+export type CreateResourceInput =
+  | CreateVideoResourceInput
+  | CreateImageBatchResourceInput;
+
+export async function listResources(
+  projectId: string,
+): Promise<ResourceSummary[]> {
+  const ids = await readIndex(resourcesIndexPath(projectId));
+  const allImages = await listImages(projectId);
+  const counts = new Map<string, number>();
+  for (const img of allImages) {
+    counts.set(img.resourceId, (counts.get(img.resourceId) ?? 0) + 1);
+  }
+  const out: ResourceSummary[] = [];
   for (const id of ids) {
-    try {
-      const meta = await getVideoMeta(projectId, id);
-      if (!meta) continue;
-      const data = await getVideoData(projectId, id);
-      out.push({
-        ...meta,
-        frameCount: data.frames.length,
-        annotationCount: data.annotations.length,
-      });
-    } catch {
-      // skip broken entry
-    }
+    const r = await getResource(projectId, id);
+    if (r) out.push({ ...r, imageCount: counts.get(id) ?? 0 });
   }
   out.sort((a, b) => a.createdAt - b.createdAt);
   return out;
 }
 
-export async function getVideoMeta(
+export async function getResource(
   projectId: string,
-  videoId: string,
-): Promise<VideoMeta | null> {
-  const p = path.join(videoDir(projectId, videoId), "meta.json");
+  resourceId: string,
+): Promise<Resource | null> {
+  const p = path.join(resourceDir(projectId, resourceId), "meta.json");
   try {
-    return JSON.parse(await fs.readFile(p, "utf-8")) as VideoMeta;
+    return JSON.parse(await fs.readFile(p, "utf-8")) as Resource;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
   }
 }
 
-function videoDataPath(projectId: string, videoId: string): string {
-  return path.join(videoDir(projectId, videoId), "data.json");
-}
-
-export async function getVideoData(
+export async function createResource(
   projectId: string,
-  videoId: string,
-): Promise<VideoData> {
-  return readJson<VideoData>(videoDataPath(projectId, videoId), {
-    classes: [],
-    frames: [],
-    annotations: [],
-  });
-}
-
-export async function saveVideoData(
-  projectId: string,
-  videoId: string,
-  data: VideoData,
-): Promise<void> {
-  await writeJson(videoDataPath(projectId, videoId), data);
-}
-
-/**
- * Locked read-modify-write on data.json. Use this for any mutation that
- * depends on the current contents — frame add/remove, annotation overlay, etc.
- * The mutator may modify `data` in place and/or return a value, which is
- * forwarded to the caller. The write is skipped only if the mutator returns
- * the literal value `false` (e.g. nothing to do).
- */
-export async function mutateVideoData<T>(
-  projectId: string,
-  videoId: string,
-  mutator: (data: VideoData) => Promise<T> | T,
-): Promise<T> {
-  const file = videoDataPath(projectId, videoId);
-  return withFileLock(file, async () => {
-    const data = await getVideoData(projectId, videoId);
-    const result = await mutator(data);
-    if ((result as unknown) !== false) {
-      await writeJson(file, data);
-    }
-    return result;
-  });
-}
-
-export async function createVideo(
-  projectId: string,
-  meta: Omit<VideoMeta, "id" | "createdAt">,
-  sourceBuffer: Buffer,
-): Promise<VideoMeta> {
+  input: CreateResourceInput,
+): Promise<Resource> {
   const id = genId();
-  const full: VideoMeta = { ...meta, id, createdAt: Date.now() };
-  const dir = videoDir(projectId, id);
+  const base = {
+    id,
+    type: input.type as ResourceType,
+    name: input.name.trim() || "Untitled",
+    tags: input.tags ?? [],
+    createdAt: Date.now(),
+  };
+  const resource: Resource =
+    input.type === "video"
+      ? {
+          ...base,
+          sourceExt: input.sourceExt,
+          width: input.width,
+          height: input.height,
+          duration: input.duration,
+          ingestVia: input.ingestVia,
+          previewCount: 0,
+        }
+      : { ...base };
+  const dir = resourceDir(projectId, id);
   await ensureDir(dir);
-  await ensureDir(framesDir(projectId, id));
-  await fs.writeFile(
-    path.join(dir, `source.${full.sourceExt}`),
-    new Uint8Array(sourceBuffer),
-  );
-  await writeJson(path.join(dir, "meta.json"), full);
-  await writeJson(path.join(dir, "data.json"), {
-    classes: [],
-    frames: [],
-    annotations: [],
-  });
-  await withFileLock(videosIndexPath(projectId), async () => {
-    const ids = await readVideosIndex(projectId);
-    if (!ids.includes(id)) ids.push(id);
-    await writeVideosIndex(projectId, ids);
-  });
-  return full;
-}
-
-export async function deleteVideo(
-  projectId: string,
-  videoId: string,
-): Promise<void> {
-  await withFileLock(videosIndexPath(projectId), async () => {
-    const ids = await readVideosIndex(projectId);
-    await writeVideosIndex(
-      projectId,
-      ids.filter((x) => x !== videoId),
+  if (input.type === "video") {
+    await fs.writeFile(
+      path.join(dir, `source.${input.sourceExt}`),
+      new Uint8Array(input.sourceBuffer),
     );
+  }
+  await writeJson(path.join(dir, "meta.json"), resource);
+  await appendToIndex(resourcesIndexPath(projectId), id);
+  return resource;
+}
+
+export async function updateResource(
+  projectId: string,
+  resourceId: string,
+  patch: { name?: string; tags?: string[] },
+): Promise<Resource | null> {
+  const file = path.join(resourceDir(projectId, resourceId), "meta.json");
+  return withFileLock(file, async () => {
+    const current = await getResource(projectId, resourceId);
+    if (!current) return null;
+    const next: Resource = {
+      ...current,
+      ...(patch.name != null ? { name: patch.name.trim() || current.name } : {}),
+      ...(patch.tags ? { tags: patch.tags } : {}),
+    };
+    await writeJson(file, next);
+    return next;
   });
-  await fs.rm(videoDir(projectId, videoId), { recursive: true, force: true });
 }
 
-export async function readVideoSource(
+export async function deleteResource(
   projectId: string,
-  videoId: string,
+  resourceId: string,
+): Promise<void> {
+  // Cascade: remove images that originated from this resource.
+  const images = await listImages(projectId, { resourceId });
+  for (const img of images) {
+    await deleteImage(projectId, img.id);
+  }
+  await removeFromIndex(resourcesIndexPath(projectId), resourceId);
+  await fs.rm(resourceDir(projectId, resourceId), {
+    recursive: true,
+    force: true,
+  });
+}
+
+export async function readResourceSource(
+  projectId: string,
+  resourceId: string,
 ): Promise<{ data: Buffer; ext: string } | null> {
-  const meta = await getVideoMeta(projectId, videoId);
-  if (!meta) return null;
-  const p = path.join(videoDir(projectId, videoId), `source.${meta.sourceExt}`);
+  const r = await getResource(projectId, resourceId);
+  if (!r || r.type !== "video" || !r.sourceExt) return null;
+  const p = path.join(resourceDir(projectId, resourceId), `source.${r.sourceExt}`);
   try {
-    return { data: await fs.readFile(p), ext: meta.sourceExt };
+    return { data: await fs.readFile(p), ext: r.sourceExt };
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
   }
 }
 
-// ---------- frames ----------
+// ---------- previews (video resource hover-reel thumbnails) ----------
 
-export async function writeFrame(
+function previewPath(
   projectId: string,
-  videoId: string,
-  frameId: string,
-  buffer: Buffer,
-  ext: string,
-): Promise<void> {
-  const dir = framesDir(projectId, videoId);
-  await ensureDir(dir);
-  await fs.writeFile(
-    path.join(dir, `${safeId(frameId)}.${ext}`),
-    new Uint8Array(buffer),
+  resourceId: string,
+  idx: number,
+): string {
+  return path.join(
+    resourceDir(projectId, resourceId),
+    "previews",
+    `preview-${idx}.jpg`,
   );
-}
-
-export async function readFrame(
-  projectId: string,
-  videoId: string,
-  frameId: string,
-  ext: string,
-): Promise<Buffer | null> {
-  const p = path.join(
-    framesDir(projectId, videoId),
-    `${safeId(frameId)}.${ext}`,
-  );
-  try {
-    return await fs.readFile(p);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw e;
-  }
-}
-
-export async function deleteFrame(
-  projectId: string,
-  videoId: string,
-  frameId: string,
-  ext: string,
-): Promise<void> {
-  const p = path.join(
-    framesDir(projectId, videoId),
-    `${safeId(frameId)}.${ext}`,
-  );
-  await fs.rm(p, { force: true });
-}
-
-// ---------- previews (mini hover-reel thumbnails) ----------
-
-function previewPath(projectId: string, videoId: string, idx: number): string {
-  return path.join(videoDir(projectId, videoId), `preview-${idx}.jpg`);
 }
 
 export async function writePreviews(
   projectId: string,
-  videoId: string,
+  resourceId: string,
   buffers: Buffer[],
 ): Promise<number> {
-  const metaFile = path.join(videoDir(projectId, videoId), "meta.json");
+  const metaFile = path.join(resourceDir(projectId, resourceId), "meta.json");
   return withFileLock(metaFile, async () => {
-    const meta = await getVideoMeta(projectId, videoId);
-    if (!meta) throw new Error("video not found");
-    // Wipe any older preview set so a re-upload doesn't leave stale frames.
-    const oldCount = meta.previewCount ?? 0;
+    const r = await getResource(projectId, resourceId);
+    if (!r) throw new Error("resource not found");
+    if (r.type !== "video") throw new Error("previews only valid on video resources");
+    await ensureDir(path.dirname(previewPath(projectId, resourceId, 0)));
+    // Wipe older preview set so a re-upload doesn't leave stale frames.
+    const oldCount = r.previewCount ?? 0;
     for (let i = 0; i < Math.max(oldCount, buffers.length); i++) {
-      await fs.rm(previewPath(projectId, videoId, i), { force: true });
+      await fs.rm(previewPath(projectId, resourceId, i), { force: true });
     }
     for (let i = 0; i < buffers.length; i++) {
       await fs.writeFile(
-        previewPath(projectId, videoId, i),
+        previewPath(projectId, resourceId, i),
         new Uint8Array(buffers[i]),
       );
     }
-    const next: VideoMeta = { ...meta, previewCount: buffers.length };
+    const next: Resource = { ...r, previewCount: buffers.length };
     await writeJson(metaFile, next);
     return buffers.length;
   });
@@ -499,31 +462,345 @@ export async function writePreviews(
 
 export async function readPreview(
   projectId: string,
-  videoId: string,
+  resourceId: string,
   idx: number,
 ): Promise<Buffer | null> {
   if (!Number.isInteger(idx) || idx < 0) return null;
   try {
-    return await fs.readFile(previewPath(projectId, videoId, idx));
+    return await fs.readFile(previewPath(projectId, resourceId, idx));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
   }
 }
 
-export function mimeForExt(ext: string): string {
-  const e = ext.toLowerCase();
-  if (e === "mp4" || e === "m4v") return "video/mp4";
-  if (e === "webm") return "video/webm";
-  if (e === "mov") return "video/quicktime";
-  if (e === "mkv") return "video/x-matroska";
-  if (e === "jpg" || e === "jpeg") return "image/jpeg";
-  if (e === "png") return "image/png";
-  if (e === "webp") return "image/webp";
-  return "application/octet-stream";
+// ============================================================
+// Images
+// ============================================================
+
+export type CreateImageInput = {
+  resourceId: string;
+  source: ImageSource;
+  fileName: string;
+  ext: string;
+  width: number;
+  height: number;
+  tags?: string[];
+  videoFrameMeta?: VideoFrameMeta;
+  bytes: Buffer;
+  /** Optional preassigned id (for client-allocated ids during extraction). */
+  id?: string;
+};
+
+export async function listImages(
+  projectId: string,
+  filter?: ImageFilter,
+): Promise<Image[]> {
+  const ids = await readIndex(imagesIndexPath(projectId));
+  const out: Image[] = [];
+  for (const id of ids) {
+    const img = await getImage(projectId, id);
+    if (!img) continue;
+    if (filter?.resourceId && img.resourceId !== filter.resourceId) continue;
+    if (filter?.source && img.source !== filter.source) continue;
+    if (filter?.tag && !img.tags.includes(filter.tag)) continue;
+    out.push(img);
+  }
+  return out;
 }
 
-export function extFromName(name: string, fallback: string): string {
-  const m = /\.([a-zA-Z0-9]+)$/.exec(name);
-  return (m?.[1] ?? fallback).toLowerCase();
+export async function getImage(
+  projectId: string,
+  imageId: string,
+): Promise<Image | null> {
+  const p = path.join(imageDir(projectId, imageId), "meta.json");
+  try {
+    return JSON.parse(await fs.readFile(p, "utf-8")) as Image;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+export async function createImage(
+  projectId: string,
+  input: CreateImageInput,
+): Promise<Image> {
+  const id = input.id ?? genId();
+  safeId(id);
+  const image: Image = {
+    id,
+    resourceId: input.resourceId,
+    source: input.source,
+    fileName: input.fileName,
+    ext: input.ext,
+    width: input.width,
+    height: input.height,
+    tags: input.tags ?? [],
+    videoFrameMeta: input.videoFrameMeta,
+    createdAt: Date.now(),
+  };
+  const dir = imageDir(projectId, id);
+  await ensureDir(dir);
+  await fs.writeFile(
+    path.join(dir, `bytes.${input.ext}`),
+    new Uint8Array(input.bytes),
+  );
+  await writeJson(path.join(dir, "meta.json"), image);
+  await appendToIndex(imagesIndexPath(projectId), id);
+  return image;
+}
+
+export async function updateImage(
+  projectId: string,
+  imageId: string,
+  patch: { tags?: string[] },
+): Promise<Image | null> {
+  const file = path.join(imageDir(projectId, imageId), "meta.json");
+  return withFileLock(file, async () => {
+    const current = await getImage(projectId, imageId);
+    if (!current) return null;
+    const next: Image = {
+      ...current,
+      ...(patch.tags ? { tags: patch.tags } : {}),
+    };
+    await writeJson(file, next);
+    return next;
+  });
+}
+
+/**
+ * Bulk tag mutation across many images. `mode`:
+ *   - `replace` — overwrite tag list with `tags`.
+ *   - `add`     — union of current tags and `tags`.
+ *   - `remove`  — current tags minus `tags`.
+ *
+ * Per-image meta files are guarded by the same lock used by single-image
+ * updateImage(), so concurrent bulk + single edits cannot clobber each other.
+ */
+export async function bulkTagImages(
+  projectId: string,
+  imageIds: string[],
+  tags: string[],
+  mode: "replace" | "add" | "remove",
+): Promise<{ updated: number }> {
+  let updated = 0;
+  for (const id of imageIds) {
+    const file = path.join(imageDir(projectId, id), "meta.json");
+    const ok = await withFileLock(file, async () => {
+      const current = await getImage(projectId, id);
+      if (!current) return false;
+      let next: string[];
+      if (mode === "replace") {
+        next = Array.from(new Set(tags));
+      } else if (mode === "add") {
+        next = Array.from(new Set([...current.tags, ...tags]));
+      } else {
+        const drop = new Set(tags);
+        next = current.tags.filter((t) => !drop.has(t));
+      }
+      const updatedImage: Image = { ...current, tags: next };
+      await writeJson(file, updatedImage);
+      return true;
+    });
+    if (ok) updated += 1;
+  }
+  return { updated };
+}
+
+export async function deleteImage(
+  projectId: string,
+  imageId: string,
+): Promise<void> {
+  // Cascade: drop annotations referencing this image from every LabelSet, and
+  // drop the image id from every LabelSet's membership list.
+  const labelSetIds = await readIndex(labelsetsIndexPath(projectId));
+  for (const lsid of labelSetIds) {
+    await mutateLabelSetAnnotations(projectId, lsid, (data) => {
+      const before = data.annotations.length;
+      data.annotations = data.annotations.filter((a) => a.imageId !== imageId);
+      return data.annotations.length !== before;
+    });
+    await mutateLabelSet(projectId, lsid, (ls) => {
+      if (!ls.imageIds.includes(imageId)) return false;
+      ls.imageIds = ls.imageIds.filter((i) => i !== imageId);
+      return true;
+    });
+  }
+  await removeFromIndex(imagesIndexPath(projectId), imageId);
+  await fs.rm(imageDir(projectId, imageId), { recursive: true, force: true });
+}
+
+export async function readImageBytes(
+  projectId: string,
+  imageId: string,
+): Promise<{ data: Buffer; ext: string } | null> {
+  const img = await getImage(projectId, imageId);
+  if (!img) return null;
+  const p = path.join(imageDir(projectId, imageId), `bytes.${img.ext}`);
+  try {
+    return { data: await fs.readFile(p), ext: img.ext };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+// ============================================================
+// LabelSets
+// ============================================================
+
+export type CreateLabelSetInput = {
+  name: string;
+  type: LabelSetType;
+  classes?: LabelClass[];
+  imageIds?: string[];
+};
+
+export async function listLabelSets(
+  projectId: string,
+): Promise<LabelSetSummary[]> {
+  const ids = await readIndex(labelsetsIndexPath(projectId));
+  const out: LabelSetSummary[] = [];
+  for (const id of ids) {
+    const ls = await getLabelSet(projectId, id);
+    if (!ls) continue;
+    const ann = await getLabelSetAnnotations(projectId, id);
+    out.push({
+      id: ls.id,
+      name: ls.name,
+      type: ls.type,
+      imageCount: ls.imageIds.length,
+      annotationCount: ann.annotations.length,
+      createdAt: ls.createdAt,
+    });
+  }
+  out.sort((a, b) => a.createdAt - b.createdAt);
+  return out;
+}
+
+export async function getLabelSet(
+  projectId: string,
+  labelSetId: string,
+): Promise<LabelSet | null> {
+  const p = path.join(labelSetDir(projectId, labelSetId), "meta.json");
+  try {
+    return JSON.parse(await fs.readFile(p, "utf-8")) as LabelSet;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+export async function createLabelSet(
+  projectId: string,
+  input: CreateLabelSetInput,
+): Promise<LabelSet> {
+  const id = genId();
+  const labelset: LabelSet = {
+    id,
+    name: input.name.trim() || "Untitled",
+    type: input.type,
+    classes: input.classes ?? [],
+    imageIds: input.imageIds ?? [],
+    createdAt: Date.now(),
+  };
+  const dir = labelSetDir(projectId, id);
+  await ensureDir(dir);
+  await writeJson(path.join(dir, "meta.json"), labelset);
+  await writeJson(path.join(dir, "annotations.json"), {
+    annotations: [],
+  } satisfies LabelSetAnnotations);
+  await appendToIndex(labelsetsIndexPath(projectId), id);
+  return labelset;
+}
+
+export async function mutateLabelSet(
+  projectId: string,
+  labelSetId: string,
+  mutator: (ls: LabelSet) => boolean | void,
+): Promise<LabelSet | null> {
+  const file = path.join(labelSetDir(projectId, labelSetId), "meta.json");
+  return withFileLock(file, async () => {
+    const current = await getLabelSet(projectId, labelSetId);
+    if (!current) return null;
+    const result = mutator(current);
+    if (result === false) return current;
+    await writeJson(file, current);
+    return current;
+  });
+}
+
+export async function updateLabelSet(
+  projectId: string,
+  labelSetId: string,
+  patch: {
+    name?: string;
+    classes?: LabelClass[];
+    imageIds?: string[];
+  },
+): Promise<LabelSet | null> {
+  return mutateLabelSet(projectId, labelSetId, (ls) => {
+    if (patch.name != null) ls.name = patch.name.trim() || ls.name;
+    if (patch.classes) ls.classes = patch.classes;
+    if (patch.imageIds) ls.imageIds = patch.imageIds;
+  });
+}
+
+export async function deleteLabelSet(
+  projectId: string,
+  labelSetId: string,
+): Promise<void> {
+  await removeFromIndex(labelsetsIndexPath(projectId), labelSetId);
+  await fs.rm(labelSetDir(projectId, labelSetId), {
+    recursive: true,
+    force: true,
+  });
+}
+
+// ---------- LabelSet annotations ----------
+
+function labelSetAnnotationsPath(
+  projectId: string,
+  labelSetId: string,
+): string {
+  return path.join(labelSetDir(projectId, labelSetId), "annotations.json");
+}
+
+export async function getLabelSetAnnotations(
+  projectId: string,
+  labelSetId: string,
+): Promise<LabelSetAnnotations> {
+  return readJson<LabelSetAnnotations>(
+    labelSetAnnotationsPath(projectId, labelSetId),
+    { annotations: [] },
+  );
+}
+
+export async function saveLabelSetAnnotations(
+  projectId: string,
+  labelSetId: string,
+  data: LabelSetAnnotations,
+): Promise<void> {
+  await writeJson(labelSetAnnotationsPath(projectId, labelSetId), data);
+}
+
+/**
+ * Locked read-modify-write on a LabelSet's annotations.json. The mutator may
+ * modify `data` in place; a return of exactly `false` skips the write.
+ */
+export async function mutateLabelSetAnnotations<T>(
+  projectId: string,
+  labelSetId: string,
+  mutator: (data: LabelSetAnnotations) => Promise<T> | T,
+): Promise<T> {
+  const file = labelSetAnnotationsPath(projectId, labelSetId);
+  return withFileLock(file, async () => {
+    const data = await getLabelSetAnnotations(projectId, labelSetId);
+    const result = await mutator(data);
+    if ((result as unknown) !== false) {
+      await writeJson(file, data);
+    }
+    return result;
+  });
 }

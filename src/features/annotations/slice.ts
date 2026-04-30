@@ -12,6 +12,13 @@ import type {
   ToolId,
 } from "./types";
 
+/**
+ * Mirror of the enclosing LabelSet's type. Drives whether the stage runs
+ * the rect/polygon drawing pipeline or the click-to-classify pipeline. Null
+ * when there is no LabelSet in scope (no labeling page mounted).
+ */
+export type LabelSetType = "polygon" | "bbox" | "classify";
+
 const PALETTE = [
   "#5b8cff",
   "#ffb35b",
@@ -69,6 +76,8 @@ export type AnnotationsSlice = {
 
   setActiveTool: (id: ToolId) => void;
   setInteractionMode: (mode: "draw" | "edit") => void;
+  labelSetType: LabelSetType | null;
+  setLabelSetType: (type: LabelSetType | null) => void;
   setSegmentModel: (id: SegmentModelId) => void;
   setSegmentModels: (models: SegmentModelInfo[]) => void;
   setSegmenting: (id: string, on: boolean) => void;
@@ -92,6 +101,7 @@ export const createAnnotationsSlice: StateCreator<
   segmentModels: [...SEGMENT_MODELS],
   segmentingIds: {},
   lastSegmentRequestAt: {},
+  labelSetType: null,
 
   addClass: (name) => {
     const c: LabelClass = {
@@ -139,10 +149,20 @@ export const createAnnotationsSlice: StateCreator<
 
   addAnnotation: (a) => {
     const ann: Annotation = { id: uid(), createdAt: Date.now(), ...a };
-    set((s) => ({
-      annotations: [...s.annotations, ann],
-      selectedAnnotationId: ann.id,
-    }));
+    set((s) => {
+      // Classify is single-class-per-image: drop any prior classify on the
+      // same image before appending this one. rect/polygon stay multi-shape.
+      const annotations =
+        ann.kind === "classify"
+          ? s.annotations.filter(
+              (x) => !(x.kind === "classify" && x.frameId === ann.frameId),
+            )
+          : s.annotations;
+      return {
+        annotations: [...annotations, ann],
+        selectedAnnotationId: ann.id,
+      };
+    });
     return ann;
   },
 
@@ -181,6 +201,7 @@ export const createAnnotationsSlice: StateCreator<
 
   setActiveTool: (id) => set({ activeToolId: id }),
   setInteractionMode: (interactionMode) => set({ interactionMode }),
+  setLabelSetType: (labelSetType) => set({ labelSetType }),
   setSegmentModel: (segmentModel) => set({ segmentModel }),
   setSegmentModels: (segmentModels) => set({ segmentModels }),
 

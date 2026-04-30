@@ -1,9 +1,1 @@
-export type {
-  Project,
-  ProjectMember,
-  ProjectSummary,
-  StoredFrame,
-  VideoData,
-  VideoMeta,
-  VideoSummary,
-} from "./types";
+export type { Project, ProjectMember, ProjectSummary } from "./types";

@@ -45,6 +45,10 @@ export function LabelPanel() {
   const segmentingIds = useStore((s) => s.segmentingIds);
   const setSegmenting = useStore((s) => s.setSegmenting);
   const markSegmentRequested = useStore((s) => s.markSegmentRequested);
+  const labelSetType = useStore((s) => s.labelSetType);
+  // Segment-by-H is only meaningful in polygon LabelSets — bbox would
+  // immediately discard the polygon ring, classify has no shape at all.
+  const segmentEnabled = labelSetType === null || labelSetType === "polygon";
 
   const [draftName, setDraftName] = useState("");
   // Which class row is currently hovered (for shortcut assignment).
@@ -110,7 +114,7 @@ export function LabelPanel() {
     async (annotationId: string) => {
       const state = useStore.getState();
       const ann = state.annotations.find((a) => a.id === annotationId);
-      if (!ann) return;
+      if (!ann || !ann.shape) return;
       const frame = state.frames.find((f) => f.id === ann.frameId);
       if (!frame) return;
       const klass = state.classes.find((c) => c.id === ann.classId);
@@ -203,8 +207,13 @@ export function LabelPanel() {
             return;
           }
         }
-        // H → refine shape via segmentation endpoint
+        // H → refine shape via segmentation endpoint. The segmentation
+        // pipeline produces polygon (or rect) shapes; we only expose it
+        // inside polygon LabelSets so the resulting shape kind matches the
+        // LabelSet's contract.
         if (key === SEGMENT_KEY) {
+          const labelSetType = useStore.getState().labelSetType;
+          if (labelSetType !== null && labelSetType !== "polygon") return;
           e.preventDefault();
           e.stopImmediatePropagation();
           void runSegment(hoveredAnnotation);
@@ -404,25 +413,31 @@ export function LabelPanel() {
         <ul className="space-y-1 text-xs text-[var(--color-muted)]">
           <li><Key>Q</Key><Key>W</Key><Key>E</Key><Key>R</Key> switch active class</li>
           <li>hover annotation + <Key>Q</Key>–<Key>R</Key> change class</li>
-          <li className="flex items-center gap-1.5">
-            <span>hover annotation + <Key>H</Key> refine by</span>
-            <select
-              value={segmentModel}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (isSegmentModelId(v, segmentModels)) setSegmentModel(v);
-              }}
-              title="Backend segmentation model"
-              className="rounded border border-[var(--color-line)] bg-[var(--color-surface-2)] px-1 py-0.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-            >
-              {segmentModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
-              ))}
-            </select>
-          </li>
+          {segmentEnabled && (
+            <li className="flex items-center gap-1.5">
+              <span>hover annotation + <Key>H</Key> refine by</span>
+              <select
+                value={segmentModel}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (isSegmentModelId(v, segmentModels)) setSegmentModel(v);
+                }}
+                title="Backend segmentation model"
+                className="rounded border border-[var(--color-line)] bg-[var(--color-surface-2)] px-1 py-0.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+              >
+                {segmentModels.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+            </li>
+          )}
           <li><Key>D</Key> delete selected / hovered box</li>
-          <li><Key>R</Key> rect tool · <Key>P</Key> polygon tool</li>
-          <li>polygon: click vertices; click first vertex or <Key>Enter</Key> to close (≥3 points)</li>
+          {labelSetType === null && (
+            <li><Key>R</Key> rect tool · <Key>P</Key> polygon tool</li>
+          )}
+          {(labelSetType === null || labelSetType === "polygon") && (
+            <li>polygon: click vertices; click first vertex or <Key>Enter</Key> to close (≥3 points)</li>
+          )}
           <li><Key>1</Key> prev frame · <Key>2</Key> next frame</li>
           <li><Key>C</Key> toggle draw/edit · <Key>Esc</Key> cancel draw</li>
           <li>scroll → zoom · dblclick → fit</li>
@@ -488,9 +503,16 @@ function BulkApplyTrigger({
       exceptedFrameIds={exceptedFrameIds}
       classes={classes}
       onApply={(frameIds) => {
+        // Bulk apply only makes sense for shape-bearing annotations.
+        if (!ann.shape || (ann.kind !== "rect" && ann.kind !== "polygon")) return;
         for (const frameId of frameIds) {
           if (frameId !== ann.frameId) {
-            addAnnotation({ frameId, classId: ann.classId, shape: ann.shape });
+            addAnnotation({
+              frameId,
+              classId: ann.classId,
+              kind: ann.kind,
+              shape: ann.shape,
+            });
           }
         }
       }}

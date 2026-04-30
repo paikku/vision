@@ -22,6 +22,20 @@ export const TOOLS: Record<ToolId, AnnotationTool> = {
       throw new Error("mask tool not implemented");
     },
   },
+  // Classification is not a draw-tool — there is no shape — but it is part
+  // of the ToolId union so downstream switches stay exhaustive. The drawing
+  // hook (useDrawingTool) is gated off when activeToolId === "classify"; the
+  // stage handles classify clicks separately.
+  classify: {
+    id: "classify",
+    name: "Classify",
+    shortcut: undefined,
+    cursor: "pointer",
+    disabled: true,
+    begin: () => {
+      throw new Error("classify is not a draw tool");
+    },
+  },
 };
 
 export const TOOL_LIST: AnnotationTool[] = Object.values(TOOLS);

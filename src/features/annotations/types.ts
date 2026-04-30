@@ -33,12 +33,24 @@ export type PolygonShape = {
 
 export type Shape = RectShape | PolygonShape;
 
+/**
+ * The labeling kind of an Annotation, picked from the enclosing LabelSet's
+ * type. `rect` and `polygon` carry a {@link Shape}; `classify` is per-image
+ * single-class with no shape.
+ */
+export type AnnotationKind = "rect" | "polygon" | "classify";
+
 export type Annotation = {
   id: string;
+  /** Semantically the imageId (named `frameId` for legacy reasons). */
   frameId: string;
   classId: string;
-  shape: Shape;
+  kind: AnnotationKind;
+  /** Required for kind="rect"|"polygon"; absent for kind="classify". */
+  shape?: Shape;
   createdAt: number;
 };
 
-export type ToolId = "rect" | "polygon" | "mask";
+/** Tool ids the drawing layer can dispatch on. `classify` does not draw — it
+ *  only sets the active LabelSet's classification on click. */
+export type ToolId = "rect" | "polygon" | "classify" | "mask";
