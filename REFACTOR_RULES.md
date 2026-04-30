@@ -10,25 +10,28 @@
 ```text
 app/                        # Next.js 라우팅 (얇게 유지)
   page.tsx                  ← /projects 리디렉션
-  projects/                 ← /projects, /projects/[id], /projects/[id]/videos/[vid]
+  projects/                 ← /projects, /projects/[id],
+                             /projects/[id]/resources/[rid]/extract,
+                             /projects/[id]/labelsets/[lsid]
   api/projects/...          ← fs persistence REST (storage.ts 경유)
 
 src/
   components/               # shell · 여러 feature를 조합하는 유일한 자리
     ProjectsPage.tsx        # 프로젝트 목록 shell
-    ProjectDetailPage.tsx   # 비디오 테이블 + 프레임 그리드 shell
-    ProjectWorkspace.tsx    # 라벨링 워크스페이스 shell (store hydrate)
-    ProjectTopBar.tsx       # 공통 상단 바
-    UploadVideoModal.tsx    # MediaDropzone + uploadVideo 합성
-    MainMediaPanel.tsx      # media ↔ frames ↔ annotations 조립
-    useProjectSync.ts       # store ↔ 서버 동기화 (shell 전용 hook)
+    ProjectDetailPage.tsx   # Resource Pool / Image Pool / Label Sets 3-탭 shell
+    UploadResourceModal.tsx # 동영상 1개 / 이미지 묶음 통합 업로드 모달
+    CreateLabelSetModal.tsx # 이미지 풀에서 멤버 고르고 taskType 선택
+    FrameExtractionPage.tsx # 비디오에서 프레임을 뽑아 image pool 로 흘려넣는 페이지
+    LabelingWorkspace.tsx   # 라벨셋 라벨링 shell (store hydrate · taskType 분기)
+    useLabelSetSync.ts      # 라벨링 화면 store ↔ 서버 디바운스 저장 (shell 전용 hook)
 
   features/
     media/                  # 업로드·원본·normalize·비디오 재생·프레임 추출
     frames/                 # 프레임 목록·활성 프레임·exception 필터
-    annotations/            # class·shape·tool·drawing·keyboard
+    annotations/            # class·shape·tool·drawing·classify·keyboard
     export/                 # 직렬화/다운로드
-    projects/               # 프로젝트·비디오·프레임 서버 API 래퍼 (slice 없음, 타입+service만)
+    projects/               # 프로젝트·리소스·이미지·라벨셋 서버 API 래퍼
+                            # (slice 없음, 타입+service만)
 
   shared/                   # 순수 유틸·범용 훅만
     types.ts                # Point 등 도메인 무관 타입
@@ -102,7 +105,7 @@ features/<name>/
 - Service는 순수 함수 (`async (input) => output`) 시그니처 유지. Store 쓰지 않는다.
   - 호출자(UI/slice/shell)가 결과를 받아 store에 반영한다.
 - 서버 persistence는 **`features/projects/service/api.ts` (REST 클라이언트) ↔ `app/api/projects/...` (라우트) ↔ `lib/server/storage.ts` (fs)** 의 3단 구조. DB로 교체 시 `storage.ts` 단일 파일만 갈아끼우면 된다.
-- 다른 feature는 자체 service에서 `projects/service`를 직접 호출하지 말 것 — store에 반영해야 할 동기화 로직은 shell의 `useProjectSync` 같은 훅으로 응집시킨다.
+- 다른 feature는 자체 service에서 `projects/service`를 직접 호출하지 말 것 — store에 반영해야 할 동기화 로직은 shell의 `useLabelSetSync` (또는 `FrameExtractionPage` 안의 sync effect) 같은 훅으로 응집시킨다.
 
 ---
 
@@ -135,7 +138,7 @@ features/<name>/
 | 이벤트 버스 | cross-slice cleanup이 composition root에 집중 | 해당 블록만 emitter로 치환 |
 | 새 도구 (polygon) | `annotations/tools/` + `Shape` union | registry 등록 + 렌더 분기 |
 | `entities/` 승격 | `features/*/types.ts` | 파일 이동만 |
-| `workflows/` 도입 | `components/` shell (`ProjectWorkspace` 등) | shell 분해·이동 |
+| `workflows/` 도입 | `components/` shell (`LabelingWorkspace`, `FrameExtractionPage` 등) | shell 분해·이동 |
 
 ---
 
