@@ -273,12 +273,13 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 - **Hover = 시킹**: 카드 `onMouseEnter` 에서 그 timestamp 로 시킹. 줄 `onMouseEnter` 시 `getCurrentTime()` 을 `hoverRestoreRef` 에 한 번만 저장, 줄 `onMouseLeave` 시 그 값으로 복귀. range 핸들 드래그와 같은 save/restore 패턴.
 - **선택**: 클릭=토글, Shift+클릭=`lastClickedFrameIdRef` ↔ 현재 사이 범위 추가, 드래그 marquee=박스 안 batch toggle. ImagePool 과 동일한 패턴 — 컨테이너에 pointer-capture 안 잡고 document listener 사용 (§12.2). 좌표는 scroll-content 기준 (§12.3). 카드 `<img>` 는 `draggable={false}` (§12.4).
 - **marquee 드래그 중 hover 시킹 무시**: `draggingRef.current` 를 onMove 의 임계값 통과 시점에 true, onUp 에서 false. 카드 hover 핸들러가 이 ref 검사 후 skip.
-- **삭제**: "선택 N개 삭제" 버튼 + Delete/Backspace 단축키. native `confirm` 후 `deleteImage` cascade. 범위 변경 / 삭제로 사라진 id 는 `useEffect` 가 selection 에서 자동 제거.
+- **헤더 버튼**: strip 헤더에 `[전체 선택] [선택 해제] [선택 제거]` 3개. 전체 선택은 `framesInRange` 전부, 선택 제거 는 `deleteSelectedFrames` 트리거 (= Delete 단축키와 동일). 액션 줄에는 더 이상 삭제 버튼이 없음.
+- **삭제**: 헤더 "선택 제거" 버튼 + Delete/Backspace 단축키. native `confirm` 후 `deleteImage` cascade. 범위 변경 / 삭제로 사라진 id 는 `useEffect` 가 selection 에서 자동 제거.
 
 **sprite 프레임 마커 색**:
-- 추출 프레임 마커 in-range = `bg-amber-300`, out-of-range = `bg-zinc-500`. cursor 라인은 `bg-[var(--color-accent)]`.
+- 우선순위 selected > inRange/outRange. **selected** = `bg-sky-400` + h-3 (다른 마커보다 살짝 김), **in-range** = `bg-amber-300` h-2, **out-of-range** = `bg-zinc-500` h-2. cursor 라인은 `bg-[var(--color-accent)]`.
 
-**액션 줄 범위 레이블**: `· 범위 0:00~0:10 (10.00s · N프레임)` — N = `framesInRange.length`.
+**액션 줄 범위 레이블**: `· 범위 0:00~0:10 (10.00s · N프레임)` — N = `framesInRange.length`. 액션 줄 좌측 버튼은 `[범위 초기화] [↺ 처음으로] [현재 캡쳐] [N초 입력] [균등캡쳐]` 순서로 정리 (삭제는 strip 헤더로 이동).
 
 **중복 timestamp 차단**:
 - 상수 `TIMESTAMP_DEDUPE_EPS = 0.008` (라벨링 store §11.x 의 dedup 과 동일).

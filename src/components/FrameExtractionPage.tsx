@@ -326,23 +326,6 @@ export function FrameExtractionPage({
     [seek],
   );
 
-  // ---------- frame markers (existing extracted frames) ----------
-
-  const frameMarkers = useMemo(() => {
-    if (!duration) return [] as { id: string; left: number; inRange: boolean }[];
-    return frames
-      .filter((f) => typeof f.videoFrameMeta?.timestamp === "number")
-      .map((f) => {
-        const t = f.videoFrameMeta!.timestamp as number;
-        const inRange = range ? t >= range.start && t <= range.end : true;
-        return {
-          id: f.id,
-          left: Math.min(100, Math.max(0, (t / duration) * 100)),
-          inRange,
-        };
-      });
-  }, [frames, duration, range]);
-
   const framesInRange = useMemo(() => {
     if (!range) return [];
     return frames.filter((f) => {
@@ -435,6 +418,35 @@ export function FrameExtractionPage({
   const deleteSelectedFrames = useCallback(() => {
     void deleteFrames([...selectedFrameIds]);
   }, [deleteFrames, selectedFrameIds]);
+
+  const selectAllInRange = useCallback(() => {
+    setSelectedFrameIds(new Set(framesInRange.map((f) => f.id)));
+    lastClickedFrameIdRef.current = null;
+  }, [framesInRange]);
+
+  // ---------- frame markers (extracted frames; positioned on sprite track) ----------
+
+  const frameMarkers = useMemo(() => {
+    if (!duration)
+      return [] as {
+        id: string;
+        left: number;
+        inRange: boolean;
+        selected: boolean;
+      }[];
+    return frames
+      .filter((f) => typeof f.videoFrameMeta?.timestamp === "number")
+      .map((f) => {
+        const t = f.videoFrameMeta!.timestamp as number;
+        const inRange = range ? t >= range.start && t <= range.end : true;
+        return {
+          id: f.id,
+          left: Math.min(100, Math.max(0, (t / duration) * 100)),
+          inRange,
+          selected: selectedFrameIds.has(f.id),
+        };
+      });
+  }, [frames, duration, range, selectedFrameIds]);
 
   // ---------- capture / upload pipeline ----------
 
@@ -696,13 +708,21 @@ export function FrameExtractionPage({
                   className="absolute inset-y-0 w-0.5 bg-[var(--color-accent)]"
                   style={{ left: `${(currentTime / duration) * 100}%` }}
                 />
-                {frameMarkers.map((m) => (
-                  <span
-                    key={m.id}
-                    className={`absolute bottom-0.5 h-2 w-0.5 ${m.inRange ? "bg-amber-300" : "bg-zinc-500"}`}
-                    style={{ left: `${m.left}%` }}
-                  />
-                ))}
+                {frameMarkers.map((m) => {
+                  const color = m.selected
+                    ? "bg-sky-400"
+                    : m.inRange
+                      ? "bg-amber-300"
+                      : "bg-zinc-500";
+                  const height = m.selected ? "h-3" : "h-2";
+                  return (
+                    <span
+                      key={m.id}
+                      className={`absolute bottom-0.5 ${height} w-0.5 ${color}`}
+                      style={{ left: `${m.left}%` }}
+                    />
+                  );
+                })}
               </div>
             </div>
 
@@ -780,7 +800,7 @@ export function FrameExtractionPage({
                 className={BTN_DEFAULT}
                 title="범위를 전체 [0, duration]로 초기화"
               >
-                초기화
+                범위 초기화
               </button>
               <button
                 type="button"
@@ -847,15 +867,6 @@ export function FrameExtractionPage({
                 <span className="text-[11px] text-[var(--color-muted)]">s</span>
               </div>
 
-              <button
-                type="button"
-                disabled={selectedFrameIds.size === 0}
-                onClick={deleteSelectedFrames}
-                className={BTN_DANGER}
-                title="선택된 프레임 삭제 (Delete)"
-              >
-                선택 {selectedFrameIds.size}개 삭제
-              </button>
             </div>
           </div>
         )}
@@ -866,16 +877,36 @@ export function FrameExtractionPage({
             <h2 className="text-xs font-semibold tracking-tight">
               추출된 프레임 · {framesInRange.length}/{frames.length}장
             </h2>
-            {selectedFrameIds.size > 0 && (
-              <button
-                type="button"
-                onClick={clearSelection}
-                className={BTN_DEFAULT}
-                title="선택 해제"
-              >
-                선택 해제 ({selectedFrameIds.size})
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={selectAllInRange}
+              disabled={
+                framesInRange.length === 0 ||
+                selectedFrameIds.size === framesInRange.length
+              }
+              className={BTN_DEFAULT}
+              title="범위 안의 프레임 전체 선택"
+            >
+              전체 선택
+            </button>
+            <button
+              type="button"
+              onClick={clearSelection}
+              disabled={selectedFrameIds.size === 0}
+              className={BTN_DEFAULT}
+              title="선택 해제"
+            >
+              선택 해제 {selectedFrameIds.size > 0 ? `(${selectedFrameIds.size})` : ""}
+            </button>
+            <button
+              type="button"
+              onClick={deleteSelectedFrames}
+              disabled={selectedFrameIds.size === 0}
+              className={BTN_DANGER}
+              title="선택된 프레임 삭제 (Delete)"
+            >
+              선택 제거 {selectedFrameIds.size > 0 ? `(${selectedFrameIds.size})` : ""}
+            </button>
           </div>
           <FrameStripRow
             projectId={projectId}
