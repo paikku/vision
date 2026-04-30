@@ -21,8 +21,7 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
 
   const [resourceSelection, setResourceSelection] = useState<ResourceSelection>({
-    resourceId: null,
-    resourceTags: [],
+    resourceIds: new Set(),
   });
   const [imageSelection, setImageSelection] = useState<ImageSelection>({
     ids: new Set(),
@@ -75,14 +74,18 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
         <div className="text-sm font-semibold tracking-tight">
           {project?.name ?? (loading ? "Loading…" : projectId)}
         </div>
-        <div className="ml-auto flex items-center gap-2 text-xs">
+        <nav className="ml-4 flex items-center gap-1 text-xs">
+          <span className="rounded-md bg-[var(--color-accent-soft)] px-2.5 py-1 font-medium text-[var(--color-accent)]">
+            Media
+          </span>
           <Link
             href={`/projects/${projectId}/labelsets`}
-            className="rounded-md border border-[var(--color-line)] px-2.5 py-1 hover:border-[var(--color-accent)]"
+            className="rounded-md px-2.5 py-1 text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
           >
-            LabelSets
+            LabelSets →
           </Link>
-        </div>
+        </nav>
+        <div className="ml-auto" />
       </header>
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4">
@@ -93,15 +96,9 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
               type="button"
               onClick={() => setUploadMode("video")}
               className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-black"
+              title="비디오 또는 이미지 파일을 드롭하면 자동으로 분류됩니다"
             >
-              Upload Video
-            </button>
-            <button
-              type="button"
-              onClick={() => setUploadMode("image_batch")}
-              className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-1.5 text-xs hover:border-[var(--color-accent)]"
-            >
-              Upload Images
+              + 업로드
             </button>
           </div>
         </div>
@@ -120,7 +117,10 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
           projectId={projectId}
           images={images}
           resources={resources}
-          selectedResourceId={resourceSelection.resourceId}
+          selectedResourceIds={resourceSelection.resourceIds}
+          onResourceSelectionChange={(next) =>
+            setResourceSelection({ resourceIds: next })
+          }
           selection={imageSelection}
           onSelectionChange={setImageSelection}
           onStartLabeling={() => setLabelingOpen(true)}

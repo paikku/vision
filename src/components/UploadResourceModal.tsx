@@ -14,7 +14,6 @@ import {
   uploadResourcePreviews,
 } from "@/features/resources/service/api";
 import type { ResourceType } from "@/features/resources/types";
-import { TagInput } from "./TagInput";
 
 const PREVIEW_COUNT = 10;
 
@@ -33,7 +32,6 @@ export function UploadResourceModal({
 }) {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [name, setName] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +116,6 @@ export function UploadResourceModal({
         await uploadVideo(
           projectId,
           name.trim(),
-          tags,
           files[0],
           setProgress,
           setProgressPct,
@@ -127,7 +124,6 @@ export function UploadResourceModal({
         await uploadImageBatch(
           projectId,
           name.trim(),
-          tags,
           files,
           setProgress,
           setProgressPct,
@@ -217,11 +213,6 @@ export function UploadResourceModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-[11px] text-[var(--color-muted)]">Initial tags</label>
-            <TagInput value={tags} onChange={setTags} disabled={busy} />
-          </div>
-
-          <div>
             <label className="mb-1 block text-[11px] text-[var(--color-muted)]">
               {mode === "video" ? "Video file" : "Image files"}
             </label>
@@ -287,7 +278,6 @@ export function UploadResourceModal({
 async function uploadVideo(
   projectId: string,
   name: string,
-  tags: string[],
   file: File,
   setProgress: (s: string | null) => void,
   setProgressPct: (n: number | null) => void,
@@ -334,7 +324,6 @@ async function uploadVideo(
     const resource = await createResource(projectId, {
       type: "video",
       name,
-      tags,
       file: media.file ?? file,
       width: media.width,
       height: media.height,
@@ -373,7 +362,6 @@ async function uploadVideo(
 async function uploadImageBatch(
   projectId: string,
   name: string,
-  tags: string[],
   files: File[],
   setProgress: (s: string | null) => void,
   setProgressPct: (n: number | null) => void,
@@ -390,7 +378,6 @@ async function uploadImageBatch(
   const resource = await createResource(projectId, {
     type: "image_batch",
     name,
-    tags,
   });
   setProgress(`이미지 업로드 중… (0/${files.length})`);
   setProgressPct(0);
