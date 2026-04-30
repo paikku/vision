@@ -252,9 +252,41 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ### 9.1 `FrameExtractionPage` (`src/components/FrameExtractionPage.tsx`)
 
-- Resource source 비디오를 `<video>` 로 마운트하고, 추출 결과는 `addImagesToResource(projectId, resourceId, [...])` 로 즉시 서버에 등록 → 같은 페이지 안에서 썸네일 그리드로 다시 보여준다.
+- Resource source 비디오를 `<video controls>` 로 마운트하고, 추출 결과는 `addImagesToResource(projectId, resourceId, [...])` 로 즉시 서버에 등록 → 같은 페이지 안에서 단일 행 frame strip 으로 다시 보여준다.
 - 추출된 Image 의 id 는 클라이언트가 미리 할당하므로 (UUID), Media Library 로 돌아가도 동일 id 를 본다.
 - 페이지를 떠나면 비디오/sprite 상태는 폐기됨. 라벨링 워크스페이스는 비디오를 보지 않고 Image 만 본다.
+- 페이지는 `BottomTimeline` (§9.2) 을 사용하지 않고 **자체 inline timeline** 을 가진다: sprite preview 트랙 + range 트랙 + 액션 줄 + 좌상단 HUD + 추출 프레임 strip.
+
+**좌상단 HUD** (비디오 영역 `absolute left-2 top-2`):
+- `frame: <current> / <total>` — `Math.floor(currentTime * fps)` / `Math.floor(duration * fps)`
+- `fps: <fps>` — `estimateVideoFps(video)` 결과 (측정 전엔 "측정 중…")
+- `min: <1/fps>s` — fps 기반 최소 step (30fps → 0.033s)
+
+**범위 핸들 드래그 시킹 미리보기**:
+- 좌/우 핸들을 잡고 끌면 그 위치로 `seek()` 동기화 → 어디가 끝점인지 보면서 잡을 수 있게.
+- 드래그 시작 시점의 `video.currentTime` 을 `dragOriginRef.restoreTime` 에 저장, pointerup 시 그 값으로 복귀.
+- `mode === "translate"` (본문 평행이동) 은 시킹하지 않음.
+
+**추출된 프레임 strip** (내부 `FrameStripRow`):
+- `framesInRange` 만 단일 행으로 노출 (범위 밖 프레임은 숨김). 빈 범위에도 placeholder 로 한 줄 자리 유지 (`min-h-28`).
+- **가로 스크롤**: 컨테이너에 native `wheel` 리스너(`{passive: false}`)를 부착해 `deltaY`/`deltaX` 중 절대값 큰 쪽을 `scrollLeft` 에 더하고 `preventDefault`. React 의 `onWheel` 은 passive 라 직접 등록이 필요.
+- **Hover = 시킹**: 카드 `onMouseEnter` 에서 그 timestamp 로 시킹. 줄 `onMouseEnter` 시 `getCurrentTime()` 을 `hoverRestoreRef` 에 한 번만 저장, 줄 `onMouseLeave` 시 그 값으로 복귀. range 핸들 드래그와 같은 save/restore 패턴.
+- **선택**: 클릭=토글, Shift+클릭=`lastClickedFrameIdRef` ↔ 현재 사이 범위 추가, 드래그 marquee=박스 안 batch toggle. ImagePool 과 동일한 패턴 — 컨테이너에 pointer-capture 안 잡고 document listener 사용 (§12.2). 좌표는 scroll-content 기준 (§12.3). 카드 `<img>` 는 `draggable={false}` (§12.4).
+- **marquee 드래그 중 hover 시킹 무시**: `draggingRef.current` 를 onMove 의 임계값 통과 시점에 true, onUp 에서 false. 카드 hover 핸들러가 이 ref 검사 후 skip.
+- **삭제**: "선택 N개 삭제" 버튼 + Delete/Backspace 단축키. native `confirm` 후 `deleteImage` cascade. 범위 변경 / 삭제로 사라진 id 는 `useEffect` 가 selection 에서 자동 제거.
+
+**sprite 프레임 마커 색**:
+- 추출 프레임 마커 in-range = `bg-amber-300`, out-of-range = `bg-zinc-500`. cursor 라인은 `bg-[var(--color-accent)]`.
+
+**액션 줄 범위 레이블**: `· 범위 0:00~0:10 (10.00s · N프레임)` — N = `framesInRange.length`.
+
+**중복 timestamp 차단**:
+- 상수 `TIMESTAMP_DEDUPE_EPS = 0.008` (라벨링 store §11.x 의 dedup 과 동일).
+- 헬퍼 `hasFrameAt(frames, t)` — 기존 frames 중 `|Δt| < eps` 가 하나라도 있으면 true.
+- **현재 캡쳐**: `video.currentTime` 이 기존 프레임과 충돌하면 setError 후 abort.
+- **균등캡쳐**: 후보 `times[]` 를 (기존 frames) + (같은 배치 내 누적 accepted) 둘 다에 대해 미리 필터링. 모두 중복이면 알림 + abort. 일부 드롭 시 알림 후 나머지만 추출.
+
+**썸네일**: 그리드/리스트라 `imageThumbUrl` 사용 (§11.12 정책).
 
 ### 9.2 `BottomTimeline` (`src/features/media/ui/BottomTimeline.tsx`)
 
@@ -373,7 +405,7 @@ storage/
 
 ### 11.5 Frame Extraction (`FrameExtractionPage`)
 
-`/projects/[id]/extract/[resourceId]` — 비디오 resource → Image(`source = "video_frame"`) 추출 단독 페이지. video element + sprite + `BottomTimeline`(범위 트랙·균등캡쳐·현재 캡쳐) 을 자체 마운트. 추출된 프레임은 `addImagesToResource(projectId, resourceId, [...])` 로 서버에 즉시 등록되며, 클라이언트가 ID 를 미리 할당하므로 추출 직후 Media Library 로 돌아가도 동일한 Image id 를 본다.
+`/projects/[id]/extract/[resourceId]` — 비디오 resource → Image(`source = "video_frame"`) 추출 단독 페이지. video element + sprite + 자체 inline timeline(sprite preview 트랙 / range 트랙 / 액션 줄 / 좌상단 HUD / 추출 프레임 strip) 을 마운트. 추출된 프레임은 `addImagesToResource(projectId, resourceId, [...])` 로 서버에 즉시 등록되며, 클라이언트가 ID 를 미리 할당하므로 추출 직후 Media Library 로 돌아가도 동일한 Image id 를 본다. **인터랙션 사양 (HUD / 핸들 시킹 / strip 가로 스크롤 + hover 시킹 + 선택 + 삭제 / 마커 색 / 중복 차단) 은 §9.1 참고.**
 
 **비디오 컨트롤**: `<video controls>` 로 네이티브 HTML5 컨트롤(▶/일시정지/시킹바/볼륨/속도)을 그대로 노출. 사용자는 비디오 위에서 직접 재생·시킹하고, 하단 sprite preview 트랙은 큰 그림 한눈에 보기 + 마커, range 트랙은 균등캡쳐/필터 범위 선택 전용으로 역할이 분리된다. 액션 줄의 `↺ 처음으로` 버튼은 `currentTime = 0` 만 호출.
 

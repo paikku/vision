@@ -26,6 +26,18 @@ import type { Resource } from "@/features/resources/types";
 
 const HANDLE_HIT_PX = 8;
 const MARQUEE_THRESHOLD = 4;
+// Same epsilon as the labeling store's addFrames dedup. Two frames whose
+// timestamps differ by less than this are treated as the same instant.
+const TIMESTAMP_DEDUPE_EPS = 0.008;
+
+function hasFrameAt(frames: Image[], t: number): boolean {
+  for (const f of frames) {
+    const ft = f.videoFrameMeta?.timestamp;
+    if (typeof ft !== "number") continue;
+    if (Math.abs(ft - t) < TIMESTAMP_DEDUPE_EPS) return true;
+  }
+  return false;
+}
 
 const BTN_BASE =
   "rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 disabled:cursor-not-allowed";
@@ -449,6 +461,11 @@ export function FrameExtractionPage({
 
   const captureCurrent = useCallback(async () => {
     if (!media || !videoRef.current || busy) return;
+    const t = videoRef.current.currentTime;
+    if (hasFrameAt(frames, t)) {
+      setError(`이 시간(${formatTime(t)})에 이미 추출된 프레임이 있습니다.`);
+      return;
+    }
     setBusy(true);
     setProgress(null);
     try {
@@ -463,7 +480,7 @@ export function FrameExtractionPage({
     } finally {
       setBusy(false);
     }
-  }, [busy, media, uploadFrame]);
+  }, [busy, frames, media, uploadFrame]);
 
   const captureRangeEvenly = useCallback(async () => {
     if (!media || !range || busy) return;
@@ -471,10 +488,32 @@ export function FrameExtractionPage({
     if (sp <= 0) return;
     const cnt = Math.floor(sp / clampedInterval);
     if (cnt <= 0) return;
-    const times: number[] = [];
+    const candidates: number[] = [];
     for (let i = 0; i < cnt; i++) {
-      times.push(range.start + (i + 0.5) * clampedInterval);
+      candidates.push(range.start + (i + 0.5) * clampedInterval);
     }
+    // Drop candidates that collide with an existing frame or with an earlier
+    // candidate in the same batch (the latter only matters when the chosen
+    // interval is below the dedup epsilon, but it's cheap and defensive).
+    const accepted: number[] = [];
+    for (const t of candidates) {
+      if (hasFrameAt(frames, t)) continue;
+      if (accepted.some((a) => Math.abs(a - t) < TIMESTAMP_DEDUPE_EPS)) continue;
+      accepted.push(t);
+    }
+    const droppedCount = candidates.length - accepted.length;
+    if (accepted.length === 0) {
+      setError(
+        `이 범위에서 추출할 새 프레임이 없습니다 (${candidates.length}개 모두 이미 존재).`,
+      );
+      return;
+    }
+    if (droppedCount > 0) {
+      setError(
+        `중복된 ${droppedCount}개 프레임을 제외하고 ${accepted.length}개를 추출합니다.`,
+      );
+    }
+    const times = accepted;
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy(true);
@@ -510,7 +549,7 @@ export function FrameExtractionPage({
       setBusy(false);
       setProgress(null);
     }
-  }, [busy, clampedInterval, media, range, uploadFrame]);
+  }, [busy, clampedInterval, frames, media, range, uploadFrame]);
 
   const cancelExtraction = useCallback(() => {
     abortRef.current?.abort();
