@@ -81,3 +81,13 @@ export async function bulkTagImages(
 export function imageBytesUrl(projectId: string, imageId: string): string {
   return `/api/projects/${projectId}/images/${imageId}/bytes`;
 }
+
+/**
+ * Downscaled JPEG suitable for grid/pool views. Lazily generated server-side
+ * and cached on disk; callers should use this anywhere the original resolution
+ * is not required. The annotation stage and bulk-apply preview must keep using
+ * imageBytesUrl so vector tools see exact pixels.
+ */
+export function imageThumbUrl(projectId: string, imageId: string): string {
+  return `/api/projects/${projectId}/images/${imageId}/thumb`;
+}

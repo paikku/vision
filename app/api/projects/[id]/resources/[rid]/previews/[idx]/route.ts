@@ -12,7 +12,7 @@ export async function GET(
   return new Response(new Uint8Array(data), {
     headers: {
       "content-type": "image/jpeg",
-      "cache-control": "private, max-age=300",
+      "cache-control": "private, max-age=31536000, immutable",
     },
   });
 }

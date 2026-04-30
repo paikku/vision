@@ -321,6 +321,7 @@ storage/
     images/{imageId}/
       meta.json                                 # Image
       bytes.<ext>                               # 이미지 바이트
+      thumb-384.jpg                             # lazy 생성 썸네일 (§11.12)
     labelsets/{labelSetId}/
       meta.json                                 # LabelSet (id/name/type/classes/imageIds)
       annotations.json                          # { annotations: LabelSetAnnotation[] }
@@ -340,6 +341,7 @@ storage/
 | GET | `/api/projects/[id]/images?resourceId=&source=&tag=` | Image 목록 (필터) |
 | GET/PATCH/DELETE | `/api/projects/[id]/images/[iid]` | meta 조회·태그 수정·삭제(LabelSet 멤버십 + annotations 까지 cascade) |
 | GET | `/api/projects/[id]/images/[iid]/bytes` | 원본 이미지 바이트 |
+| GET | `/api/projects/[id]/images/[iid]/thumb` | 다운스케일 JPEG 썸네일 (lazy 생성, §11.12) |
 | POST | `/api/projects/[id]/images/tags` | Image 태그 일괄 변경 (`{imageIds, tags, mode: "add"\|"remove"\|"replace"}`) |
 | GET/POST | `/api/projects/[id]/labelsets` | LabelSet 목록·생성 |
 | GET/PATCH/DELETE | `/api/projects/[id]/labelsets/[lsid]` | meta 조회·이름/classes/imageIds 수정·삭제 |
@@ -437,6 +439,24 @@ storage/
 권장 진입점: `mutateLabelSet(projectId, lsid, mutator)`, `mutateLabelSetAnnotations(projectId, lsid, mutator)`. mutator 가 정확히 `false` 를 리턴하면 write 를 스킵한다 (no-op 케이스). `bulkTagImages` 는 imageIds 별로 각 meta.json 락을 순차로 잡으므로 같은 이미지에 대한 single-image PATCH 와 안전하게 겹친다.
 
 향후 DB 로 옮기면 `storage.ts` 한 파일만 교체하면 되고 락도 함께 사라진다.
+
+### 11.12 이미지 썸네일 파이프라인 (Media Library 성능)
+
+Media Library 의 `ImagePool` 그리드는 카드당 96px 정도만 표시하지만, 원본 이미지를 그대로 받으면 페이지 한 번에 수백 MB 다운로드가 발생한다. 이를 막기 위해 별도 thumb 엔드포인트를 둔다.
+
+- **저장**: `storage/{projectId}/images/{imageId}/thumb-384.jpg` (단일 사이즈, 384px longest-edge, JPEG q=75 mozjpeg).
+- **생성 시점**: **lazy** — 업로드 시점에는 만들지 않고, `/thumb` 첫 요청에서 만든 뒤 디스크에 캐시. 기존 이미지 backfill 마이그레이션 불필요.
+- **동시성**: thumb 파일 경로에 `withFileLock` 을 잡고, lock 안에서 다시 한 번 read 시도(double-checked) 후 없을 때만 sharp 호출. 같은 이미지에 동시에 N 개 요청이 와도 인코딩은 1번만 발생.
+- **sharp 파이프라인**: `.rotate()` (EXIF auto-orient) → `.resize(384, 384, {fit: "inside", withoutEnlargement: true})` → `.jpeg({quality: 75, mozjpeg: true})`.
+- **import 방식**: storage.ts 상단에서 import 하지 않고 함수 안에서 `await import("sharp")` 로 동적 로드. sharp 가 native binding 이라 콜드 시작 비용을 lazy 로 미루기 위함.
+- **클라이언트 헬퍼**: `imageThumbUrl(projectId, imageId)` (`@/features/images/service/api`). `ImagePool` 의 카드 그리드만 이걸 쓰고, **`AnnotationStage` / `BulkApplyModal` / `LabelingWorkspace` 등 정확한 픽셀이 필요한 곳은 절대 thumb 을 쓰지 말고 `imageBytesUrl` 유지**. 벡터 도구가 잘못된 좌표를 생성한다.
+- **캐시 정책**: thumb 라우트 + bytes 라우트 + previews 라우트 모두 `cache-control: private, max-age=31536000, immutable`. 이미지 id 와 preview index 가 안정적이라 안전. 페이지 재방문 비용 즉시 0.
+
+이 thumb 엔드포인트가 Media Library 페이지 성능의 가장 큰 레버다 (원본 2~5MB × 100 → ~30KB × 100). 새로운 그리드/리스트 뷰를 만들 때도 기본은 thumb, 정확도가 필요한 곳만 bytes 로 골라 쓸 것.
+
+### 11.13 Resource hover-reel mount 정책
+
+`ResourcePool` 의 `PreviewReel` (`src/components/ResourcePool.tsx`) 은 **frame 0 만 항상 mount**, 나머지 frame 1..N-1 은 사용자가 처음 hover 한 시점에 mount 한다 (`mountedAll` state, 한 번 켜지면 unmount 안 함 → 재-hover 시 flash 없음). 비디오 resource 가 10개 × 12 frame 이면 idle = 10 fetch, 모두 hover 후 = 120 fetch. 카드를 한 번도 가리키지 않으면 추가 110 fetch 가 영구 절약된다. 새 hover-reel 류 위젯을 만들 때도 같은 패턴 사용.
 
 ---
 
