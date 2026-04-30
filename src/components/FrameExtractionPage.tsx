@@ -58,7 +58,7 @@ export function FrameExtractionPage({
   const [progress, setProgress] = useState<CaptureProgress>(null);
   const [intervalSec, setIntervalSec] = useState(1);
   const [intervalDraft, setIntervalDraft] = useState("1.000");
-  const [stepSec, setStepSec] = useState(0.1);
+  const [stepSec, setStepSec] = useState(1);
   const abortRef = useRef<AbortController | null>(null);
 
   // Build a MediaSource pointing at the server video URL. The capture
@@ -209,8 +209,16 @@ export function FrameExtractionPage({
   const seek = useCallback((t: number) => {
     const v = videoRef.current;
     if (!v) return;
-    const clamped = Math.max(0, Math.min(duration || 0, t));
+    // Read duration directly from the element rather than React state so
+    // the very first seek (before our duration state has updated) still
+    // clamps correctly.
+    const dur = v.duration || duration || 0;
+    const clamped = Math.max(0, Math.min(dur, t));
     v.currentTime = clamped;
+    // Reflect the new time into React state immediately so any UI tied to
+    // currentTime (cursor line, "현재시간/전체시간") updates without waiting
+    // for the next timeupdate.
+    setCurrentTime(clamped);
   }, [duration]);
 
   const onPreviewPointerDown = useCallback(
@@ -445,6 +453,7 @@ export function FrameExtractionPage({
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      const v = videoRef.current;
       if (e.code === "Space") {
         e.preventDefault();
         togglePlay();
@@ -452,16 +461,20 @@ export function FrameExtractionPage({
         e.preventDefault();
         void captureCurrent();
       } else if (e.key === "ArrowLeft") {
+        if (!v) return;
         e.preventDefault();
-        seek(currentTime - stepSec * (e.shiftKey ? 5 : 1));
+        // Read currentTime live from the element so the closure doesn't
+        // depend on React state (which lags behind via timeupdate).
+        seek(v.currentTime - stepSec * (e.shiftKey ? 5 : 1));
       } else if (e.key === "ArrowRight") {
+        if (!v) return;
         e.preventDefault();
-        seek(currentTime + stepSec * (e.shiftKey ? 5 : 1));
+        seek(v.currentTime + stepSec * (e.shiftKey ? 5 : 1));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [captureCurrent, currentTime, seek, stepSec, togglePlay]);
+  }, [captureCurrent, seek, stepSec, togglePlay]);
 
   // ---------- render ----------
 

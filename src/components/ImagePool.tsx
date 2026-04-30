@@ -594,6 +594,7 @@ function ImageCard({
       type="button"
       data-image-id={image.id}
       onClick={onToggle}
+      onDragStart={(e) => e.preventDefault()}
       title={image.fileName}
       className={[
         "group relative overflow-hidden rounded-md border bg-black transition",
@@ -609,7 +610,8 @@ function ImageCard({
           alt={image.fileName}
           loading="lazy"
           decoding="async"
-          className="h-full w-full object-cover"
+          draggable={false}
+          className="pointer-events-none h-full w-full object-cover select-none"
         />
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
