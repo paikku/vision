@@ -8,10 +8,20 @@ import { getProject } from "@/features/projects/service/api";
 import type { Project } from "@/features/projects/types";
 import { listResources } from "@/features/resources/service/api";
 import type { ResourceSummary } from "@/features/resources/types";
-import { ImagePool, type ImageSelection } from "./ImagePool";
+import { BulkTagBar } from "./BulkTagBar";
+import {
+  ImagePool,
+  type ImagePoolContext,
+  type ImageSelection,
+} from "./ImagePool";
 import { ResourcePool, type ResourceSelection } from "./ResourcePool";
 import { StartLabelingModal } from "./StartLabelingModal";
 import { UploadResourceModal } from "./UploadResourceModal";
+
+const EMPTY_POOL_CONTEXT: ImagePoolContext = {
+  filteredIds: [],
+  visibleIds: [],
+};
 
 export function MediaLibraryPage({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<Project | null>(null);
@@ -31,6 +41,10 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
     null,
   );
   const [labelingOpen, setLabelingOpen] = useState(false);
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [poolContext, setPoolContext] = useState<ImagePoolContext>(
+    EMPTY_POOL_CONTEXT,
+  );
 
   const reload = useCallback(async () => {
     try {
@@ -62,6 +76,33 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
     void reload();
   }, [reload]);
 
+  // Auto-collapse the bulk-tag bar when selection drops to zero (otherwise
+  // users see an empty editor pinned over an inactive footer).
+  useEffect(() => {
+    if (imageSelection.ids.size === 0) setBulkTagOpen(false);
+  }, [imageSelection.ids]);
+
+  const selectedCount = imageSelection.ids.size;
+  const hasSelection = selectedCount > 0;
+  const visibleCount = poolContext.visibleIds.length;
+  const filteredCount = poolContext.filteredIds.length;
+
+  const selectMany = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      setImageSelection((prev) => {
+        const next = new Set(prev.ids);
+        for (const id of ids) next.add(id);
+        return { ids: next };
+      });
+    },
+    [],
+  );
+
+  const clearSelection = useCallback(() => {
+    setImageSelection({ ids: new Set() });
+  }, []);
+
   return (
     <div className="flex min-h-screen flex-col bg-[var(--color-bg)]">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-4">
@@ -88,7 +129,7 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
         <div className="ml-auto" />
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 pt-4 pb-4">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-sm font-semibold">Media Library</h1>
           <div className="ml-auto flex items-center gap-2">
@@ -123,10 +164,87 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
           }
           selection={imageSelection}
           onSelectionChange={setImageSelection}
-          onStartLabeling={() => setLabelingOpen(true)}
-          onImagesMutated={() => void reloadResources()}
+          onContextChange={setPoolContext}
         />
       </main>
+
+      {/*
+        Sticky CTA group. Always present so users learn the
+        "select images → make a label set" workflow even before any selection.
+        When nothing is selected the destructive/follow-up actions disable;
+        the entry-point selectors ("현재 페이지 / 결과 전체") stay live so
+        users have a way to bulk-pick from the keyboard-free path.
+      */}
+      <div className="sticky bottom-0 z-20 border-t border-[var(--color-line)] bg-[var(--color-surface)]/95 backdrop-blur">
+        {bulkTagOpen && hasSelection && (
+          <BulkTagBar
+            projectId={projectId}
+            imageIds={Array.from(imageSelection.ids)}
+            onClose={() => setBulkTagOpen(false)}
+            onMutated={() => void reloadResources()}
+          />
+        )}
+        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2 px-4 py-2 text-[11px]">
+          <span
+            className={
+              hasSelection
+                ? "font-medium text-[var(--color-accent)]"
+                : "text-[var(--color-muted)]"
+            }
+          >
+            {hasSelection
+              ? `${selectedCount}장 선택됨`
+              : "선택된 이미지 없음"}
+          </span>
+          <span className="text-[var(--color-muted)]">
+            {hasSelection
+              ? `· ${filteredCount}장 중`
+              : "· 이미지를 골라 라벨셋을 만들 수 있어요"}
+          </span>
+
+          <FooterButton
+            onClick={() => selectMany(poolContext.visibleIds)}
+            disabled={visibleCount === 0}
+          >
+            현재 페이지 전체 선택
+          </FooterButton>
+          <FooterButton
+            onClick={() => selectMany(poolContext.filteredIds)}
+            disabled={filteredCount === 0}
+          >
+            현재 결과 전체 선택{filteredCount > 0 ? ` (${filteredCount})` : ""}
+          </FooterButton>
+          <FooterButton onClick={clearSelection} disabled={!hasSelection}>
+            선택 해제
+          </FooterButton>
+          <FooterButton
+            onClick={() => setBulkTagOpen((v) => !v)}
+            disabled={!hasSelection}
+            active={bulkTagOpen}
+          >
+            태그 일괄…
+          </FooterButton>
+
+          <button
+            type="button"
+            onClick={() => setLabelingOpen(true)}
+            disabled={!hasSelection}
+            className={[
+              "ml-auto rounded-md px-3 py-1 font-medium transition",
+              hasSelection
+                ? "bg-[var(--color-accent)] text-black hover:brightness-110"
+                : "bg-[var(--color-surface-2)] text-[var(--color-muted)] cursor-not-allowed",
+            ].join(" ")}
+            title={
+              hasSelection
+                ? "선택한 이미지로 LabelSet 생성/추가"
+                : "먼저 이미지를 선택하세요"
+            }
+          >
+            라벨셋 →
+          </button>
+        </div>
+      </div>
 
       {uploadMode && (
         <UploadResourceModal
@@ -145,5 +263,35 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
         />
       )}
     </div>
+  );
+}
+
+function FooterButton({
+  onClick,
+  disabled,
+  active,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "rounded-md border px-2 py-0.5 transition",
+        disabled
+          ? "border-[var(--color-line)] bg-transparent text-[var(--color-muted)] opacity-50 cursor-not-allowed"
+          : active
+            ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+            : "border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-accent)]",
+      ].join(" ")}
+    >
+      {children}
+    </button>
   );
 }
