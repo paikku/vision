@@ -437,3 +437,63 @@ storage/
 권장 진입점: `mutateLabelSet(projectId, lsid, mutator)`, `mutateLabelSetAnnotations(projectId, lsid, mutator)`. mutator 가 정확히 `false` 를 리턴하면 write 를 스킵한다 (no-op 케이스). `bulkTagImages` 는 imageIds 별로 각 meta.json 락을 순차로 잡으므로 같은 이미지에 대한 single-image PATCH 와 안전하게 겹친다.
 
 향후 DB 로 옮기면 `storage.ts` 한 파일만 교체하면 되고 락도 함께 사라진다.
+
+---
+
+## 12) 흔한 함정 (재발 방지 가이드)
+
+이 프로젝트에서 한 번 이상 며칠을 태운 함정들. 비슷한 코드를 만질 때 반드시 먼저 체크할 것.
+
+### 12.1 비디오 시킹은 서버 Range 지원에 절대 의존한다
+
+**증상**: `<video>` 의 native scrubber, 스크립트로 `currentTime = X` 쓰기, 키보드 ←/→, 사용자가 만든 sprite/range 트랙 클릭, 프레임 썸네일 클릭 — **시킹 관련 모든 상호작용**이 동작하지 않음. 에러도 안 남. 비디오는 처음부터 재생되긴 함.
+
+**원인**: 비디오를 서빙하는 라우트가 HTTP Range 요청을 처리하지 않음. 응답에 `accept-ranges: bytes` 가 없거나, `Range:` 헤더 무시하고 항상 전체 파일 200 으로 반환. Chrome/Firefox/Safari 모두 Range 응답 없으면 시킹을 silently 무시함.
+
+**해결**: `app/api/projects/[id]/resources/[rid]/source/route.ts` 가 정답 템플릿. `statResourceSource()` 로 path/size 만 읽고, `Range:` 헤더 파싱(`bytes=A-B` / `bytes=A-` / `bytes=-N` 모두 지원), `fs.createReadStream(path, {start, end})` 로 streaming, `206 Partial Content` + `content-range: bytes A-B/total` + `accept-ranges: bytes` 반환. Range 없으면 200 + `accept-ranges: bytes` 광고.
+
+**검증**: dev server 띄우고 curl 로 직접 찔러서 206/range 헤더가 나오는지 확인:
+```bash
+curl -i -H "Range: bytes=0-99" http://localhost:3000/api/projects/X/resources/Y/source
+# expect: HTTP/1.1 206 Partial Content + content-range: bytes 0-99/<total>
+```
+
+비디오 시킹이 동작하지 않는다는 보고가 들어오면 **클라이언트 코드를 만지기 전에 먼저 이 라우트의 Range 응답을 검증**할 것. 5분이면 됨.
+
+### 12.2 Pointer-capture on a parent breaks child `onClick`
+
+**증상**: 컨테이너에 marquee/drag selection 을 붙였더니 자식 카드의 단일 클릭 토글이 동작하지 않음. 드래그는 됨.
+
+**원인**: 컨테이너 `onPointerDown` 에서 `e.currentTarget.setPointerCapture(e.pointerId)` 호출. 캡처는 후속 pointerup 을 컨테이너로 redirect 시키고, click 이벤트는 그 redirected pointerup 위치에서 합성되므로 **자식 button 의 onClick 이 절대 발화 안 함**. 임계값 미만 움직임이라 `dragged=false` 라도 캡처가 걸려있으면 클릭이 죽는다.
+
+**해결**: 컨테이너에 캡처를 걸지 말고, `onPointerDown` 안에서 `document.addEventListener("pointermove"/"pointerup")` 을 등록하는 패턴 사용. pointer 가 컨테이너를 벗어나도 추적되며 child click 은 native 경로로 정상 발화. drag 가 임계값을 넘은 경우만 `clickGuardRef = true` + `onClickCapture` 로 다음 click 한 번만 swallow. `src/components/ImagePool.tsx::ImageGrid` 참고.
+
+캡처가 정말로 필요한 경우(예: 단일 핸들 드래그처럼 child onClick 을 살릴 필요가 없는 인터랙션)는 그대로 써도 된다 — `BottomTimeline` 의 sprite/range 트랙이 그 예시. 컨테이너의 단일 click 만 발화하면 되는 곳.
+
+### 12.3 absolute child 좌표는 스크롤 컨텐츠 기준
+
+**증상**: marquee 박스가 스크롤 안 한 상태에서는 정상인데, 스크롤 내려서 드래그하면 박스가 안 보임.
+
+**원인**: `position: absolute` 자식은 가장 가까운 `position: relative` 조상(=스크롤 컨테이너) 의 **스크롤 컨텐츠 박스** 기준으로 배치된다. 보이는 viewport 가 아님. 따라서 `top: 50` 은 "스크롤 컨텐츠 맨 위에서 50px" 이고, 컨테이너가 `scrollTop=200` 이면 보이는 영역에서는 위로 150px 빠져 있음.
+
+**해결**: 좌표를 **scroll-content space** 로 통일. pointer 좌표는 `clientY - rect.top + el.scrollTop`, hit-test 도 같은 좌표계로 계산. `ImageGrid` 의 marquee 가 정답 템플릿.
+
+### 12.4 `<img>` 는 기본 draggable — pointerdown 가로챈다
+
+**증상**: pointer 기반 selection/marquee 를 만들었는데 이미지 위에서 드래그 시작하면 브라우저가 이미지 고스트를 따라 움직이고 우리 marquee 가 안 만들어짐. 클릭 토글도 죽음.
+
+**원인**: `<img>` 는 HTML 기본 `draggable=true`. pointerdown 에서 충분히 움직이면 브라우저가 native `dragstart` 를 발화하고, 그 시점에서 우리의 pointer 시퀀스가 abort 됨.
+
+**해결**: 이미지 카드의 `<img>` 에 `draggable={false}` + `onDragStart={e => e.preventDefault()}` (보험) + `pointer-events-none` (pointerdown 이 부모 button 에 바로 떨어지게) + `select-none`. `ImagePool::ImageCard` 참고. 이미지 외에도 `<a>`, selected 상태의 `<input>` 등이 비슷한 native drag 동작을 가질 수 있으니 새 위젯 만들 때 한 번씩 의심할 것.
+
+### 12.5 비디오 핸들러는 React state 가 아니라 element 에서 직접 읽기
+
+**증상**: 비디오 로드 직후 첫 시킹/캡쳐가 동작 안 하거나 0 으로 클램프됨.
+
+**원인**: 핸들러가 React state 의 `duration`/`currentTime` 을 읽는데, 이 값은 video element 의 `loadedmetadata`/`timeupdate` 이벤트로 setState 한 뒤 다음 렌더에서야 반영됨. 클로저는 렌더 시점의 값을 캡처하므로 stale 가능.
+
+**해결**: 핸들러 안에서 `videoRef.current.duration` / `videoRef.current.currentTime` 를 직접 읽기. React state 는 UI 표시용으로만 쓰고, 실제 시킹/클램프 계산에는 element 값을 사용. `FrameExtractionPage::seek` 참고.
+
+### 12.6 키보드 step 기본값은 시각적으로 인지 가능해야
+
+비디오 ±step 키바인딩의 기본 step 이 너무 작으면(예: 0.1s) 사용자는 "동작 안 함" 으로 인지함. 기본 1s, Shift+키 = 5s 정도가 합리적. 정밀 제어가 필요하면 fps 기반 1프레임(`1/fps`) 을 별도 단축키로 노출하는 식으로 분리.
