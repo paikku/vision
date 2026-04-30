@@ -215,15 +215,15 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ## 6) FrameStrip (`src/features/frames/ui/FrameStrip.tsx`)
 
-- **고정 폭**: `w-24` (96px) — 라벨링 워크스페이스의 stage 가 dominant 영역이고 strip 은 네비게이션 보조용. 정렬/필터 칩, 썸네일, 풋터 모두 컴팩트.
+- **고정 폭**: `w-72` (288px) — 우측 LabelPanel 과 동일 폭으로 맞춰 워크스페이스 좌우 비대칭을 제거. 폭에 여유가 생긴 만큼 정렬/필터 칩이 한 줄에 들어가고, 썸네일 풋터에 `#index · filename · timestamp · count` 가 한 줄로 표시된다.
 - **썸네일 라벨 오버레이**: 각 썸네일 위에 `viewBox="0 0 1 1" preserveAspectRatio="none"` SVG 를 올려 정규화 좌표로 rect/polygon 도형을 그림. fill = class color @ 18% opacity, stroke = class color, `vector-effect: non-scaling-stroke`. classify 어노테이션(쉐이프 없음)은 SVG 대신 `box-shadow: inset 0 0 0 2px <classColor>` 로 썸네일 가장자리에 클래스 색상 테두리. 어노테이션 → frame bucket 맵을 `useMemo` 로 캐싱해 N 개 strip rendering O(annotations) 가 아닌 O(visible).
 - **정렬**: 추가순 / 시간순(timestamp 기준)
 - **필터**: 미라벨(annotation 0개 + `exceptedFrameIds`에 없는 frame) / 범위(`frameRange` 안의 timestamp 만)
   - 범위 필터는 **기본 ON**. 미디어 로드 시 `frameRange = [0, duration]` 으로 초기화되므로 처음에는 보이는 결과가 동일하지만, 사용자가 BottomTimeline 의 핸들을 좁히면 즉시 strip 도 좁혀짐.
 - **제외(except)**: annotation 0개인 frame에 표시. 미라벨 필터에서 제외됨. 썸네일 하단 풋터에서 hover 시 표시.
-- **카운트 배지**: frame 하단 풋터에 총 annotation 수만 표시 (96px 폭에 클래스별 pill 은 들어가지 않음).
+- **카운트 배지**: frame 하단 풋터에 총 annotation 수 표시.
 - active frame 변경 시 `scrollIntoView({ block: "nearest" })`로 자동 스크롤
-- 가상화: `DEFAULT_ITEM_HEIGHT = 90`, `OVERSCAN = 6`. 첫 렌더 row 의 `getBoundingClientRect().height + ITEM_GAP` 로 actual stride 측정 후 적용.
+- 가상화: `DEFAULT_ITEM_HEIGHT = 180`(`w-72` 썸네일 + 풋터 높이의 초기 추정값), `OVERSCAN = 6`. 첫 렌더 row 의 `getBoundingClientRect().height + ITEM_GAP` 로 actual stride 측정 후 적용 — 이 측정 로직 덕에 폰트/패딩 미세 조정에는 상수 변경 없이 자동 적응한다.
 
 ---
 
@@ -334,7 +334,7 @@ storage/
 | GET/DELETE | `/api/projects/[id]` | detail·삭제 |
 | GET/POST | `/api/projects/[id]/resources` | Resource 목록·생성(multipart, video 파일 포함) |
 | GET/PATCH/DELETE | `/api/projects/[id]/resources/[rid]` | meta 조회·이름/태그 수정·삭제(자식 Image 까지 cascade) |
-| GET | `/api/projects/[id]/resources/[rid]/source` | 원본 비디오 스트림 |
+| GET | `/api/projects/[id]/resources/[rid]/source` | 원본 비디오 스트림. **HTTP Range 요청 지원**(206 Partial Content + `accept-ranges: bytes`). 브라우저는 Range 응답이 없으면 `<video>` 시킹을 silently 무시하므로 필수. `fs.createReadStream(start, end)` 으로 streaming. |
 | POST/GET | `/api/projects/[id]/resources/[rid]/previews(/[idx])` | hover-reel 썸네일 |
 | POST | `/api/projects/[id]/resources/[rid]/images` | Resource 에 Image 일괄 추가 (frame 추출 결과 포함) |
 | GET | `/api/projects/[id]/images?resourceId=&source=&tag=` | Image 목록 (필터) |
@@ -359,6 +359,12 @@ storage/
   - **By Tag** — image tag 별 그룹 (멀티 태그 이미지는 여러 그룹에 중복 노출, 무태그 이미지는 "(no tag)" 그룹 하단)
   - **Resource × Tag matrix** — 행=tag, 열=resource, 셀=해당 (tag, resource) 의 image 수. 셀 클릭 = 셀에 속한 이미지 일괄 선택/해제
 - **선택 모델**: `ImageSelection.ids: Set<string>` 가 단일 source. "현재 페이지 전체 선택" / "현재 결과 전체 선택" / "선택 해제" / 셀·그룹 일괄 선택 모두 같은 set 을 갱신.
+- **선택 인터랙션**:
+  - **클릭** = 단일 토글 (선택된 카드를 다시 클릭하면 해제)
+  - **드래그(marquee)** = 박스 안의 카드들을 batch-toggle. 박스 안에 미선택이 하나라도 있으면 박스 전체를 추가 선택, 박스 전체가 이미 선택돼 있으면 박스 전체를 해제. 임계값 `MARQUEE_THRESHOLD = 4px` 미만의 움직임은 클릭으로 처리되어 카드 onClick 이 정상 발화. 임계값을 넘긴 드래그는 pointerup 직후의 click 을 `onClickCapture` 에서 swallow 해서 카드 토글이 두 번 일어나지 않게 한다 (`clickGuardRef`).
+  - 카드는 `data-image-id` 를 달고 있어 marquee hit-test 가 `querySelectorAll("[data-image-id]")` + `getBoundingClientRect()` 로 일관되게 동작.
+- **3행 스크롤 캡**: 모든 view mode 에서 `ImageGrid`(또는 `MatrixView`)의 스크롤 컨테이너에 `max-h-[336px]` 를 걸어 ~3행 이상이면 내부 세로 스크롤. By Resource / By Tag 그룹은 그룹별로 각자 캡이 걸리므로 그룹간 비교 시 페이지가 끝없이 길어지지 않는다.
+- **그룹 들여쓰기**: `By Resource` / `By Tag` 그룹은 헤더 다음 그리드 본문에 `ml-2 pl-3 border-l border-[var(--color-line)]` 좌측 가이드라인을 그려 시각적 위계 강조. 헤더 자체는 들여쓰기 안 됨.
 - **Pagination**: `PAGE_SIZE = 100` + "더 보기" 버튼으로 점진 확장. 필터/검색/view 변경 시 자동 리셋. 썸네일은 `loading="lazy"` + `decoding="async"`.
 - **Bulk tag**: 선택이 1장 이상일 때 "태그 일괄…" 버튼 → 인라인 `BulkTagBar`. 입력한 태그를 `add`/`remove`/`replace` 모드로 일괄 적용 (`POST /images/tags`). 성공 시 `onImagesMutated()` 로 부모가 재로드.
 - **Start Labeling**: 선택 1장 이상에서 활성화. `StartLabelingModal` 로 새 LabelSet 생성 또는 기존에 추가 (existing 의 경우 imageIds union → PATCH).
@@ -367,7 +373,7 @@ storage/
 
 `/projects/[id]/extract/[resourceId]` — 비디오 resource → Image(`source = "video_frame"`) 추출 단독 페이지. video element + sprite + `BottomTimeline`(범위 트랙·균등캡쳐·현재 캡쳐) 을 자체 마운트. 추출된 프레임은 `addImagesToResource(projectId, resourceId, [...])` 로 서버에 즉시 등록되며, 클라이언트가 ID 를 미리 할당하므로 추출 직후 Media Library 로 돌아가도 동일한 Image id 를 본다.
 
-**비디오 surface 클릭 = 처음으로 되돌림**: `<video>` 를 감싼 검은 영역 onClick 핸들러가 `pause()` + `currentTime = 0`. seek 는 하단 sprite/range 트랙이 전담하므로 비디오 위 클릭이 우발적으로 cursor 를 옮기지 않게 한 것 — 한 번 다시 처음부터 보고 싶을 때 빠른 제스처가 됨. 커서는 `cursor-pointer` 로 클릭 가능함을 시각화.
+**비디오 컨트롤**: `<video controls>` 로 네이티브 HTML5 컨트롤(▶/일시정지/시킹바/볼륨/속도)을 그대로 노출. 사용자는 비디오 위에서 직접 재생·시킹하고, 하단 sprite preview 트랙은 큰 그림 한눈에 보기 + 마커, range 트랙은 균등캡쳐/필터 범위 선택 전용으로 역할이 분리된다. 액션 줄의 `↺ 처음으로` 버튼은 `currentTime = 0` 만 호출.
 
 ### 11.6 LabelSet 워크스페이스 하이드레이션 (`LabelingWorkspace`)
 
@@ -431,3 +437,63 @@ storage/
 권장 진입점: `mutateLabelSet(projectId, lsid, mutator)`, `mutateLabelSetAnnotations(projectId, lsid, mutator)`. mutator 가 정확히 `false` 를 리턴하면 write 를 스킵한다 (no-op 케이스). `bulkTagImages` 는 imageIds 별로 각 meta.json 락을 순차로 잡으므로 같은 이미지에 대한 single-image PATCH 와 안전하게 겹친다.
 
 향후 DB 로 옮기면 `storage.ts` 한 파일만 교체하면 되고 락도 함께 사라진다.
+
+---
+
+## 12) 흔한 함정 (재발 방지 가이드)
+
+이 프로젝트에서 한 번 이상 며칠을 태운 함정들. 비슷한 코드를 만질 때 반드시 먼저 체크할 것.
+
+### 12.1 비디오 시킹은 서버 Range 지원에 절대 의존한다
+
+**증상**: `<video>` 의 native scrubber, 스크립트로 `currentTime = X` 쓰기, 키보드 ←/→, 사용자가 만든 sprite/range 트랙 클릭, 프레임 썸네일 클릭 — **시킹 관련 모든 상호작용**이 동작하지 않음. 에러도 안 남. 비디오는 처음부터 재생되긴 함.
+
+**원인**: 비디오를 서빙하는 라우트가 HTTP Range 요청을 처리하지 않음. 응답에 `accept-ranges: bytes` 가 없거나, `Range:` 헤더 무시하고 항상 전체 파일 200 으로 반환. Chrome/Firefox/Safari 모두 Range 응답 없으면 시킹을 silently 무시함.
+
+**해결**: `app/api/projects/[id]/resources/[rid]/source/route.ts` 가 정답 템플릿. `statResourceSource()` 로 path/size 만 읽고, `Range:` 헤더 파싱(`bytes=A-B` / `bytes=A-` / `bytes=-N` 모두 지원), `fs.createReadStream(path, {start, end})` 로 streaming, `206 Partial Content` + `content-range: bytes A-B/total` + `accept-ranges: bytes` 반환. Range 없으면 200 + `accept-ranges: bytes` 광고.
+
+**검증**: dev server 띄우고 curl 로 직접 찔러서 206/range 헤더가 나오는지 확인:
+```bash
+curl -i -H "Range: bytes=0-99" http://localhost:3000/api/projects/X/resources/Y/source
+# expect: HTTP/1.1 206 Partial Content + content-range: bytes 0-99/<total>
+```
+
+비디오 시킹이 동작하지 않는다는 보고가 들어오면 **클라이언트 코드를 만지기 전에 먼저 이 라우트의 Range 응답을 검증**할 것. 5분이면 됨.
+
+### 12.2 Pointer-capture on a parent breaks child `onClick`
+
+**증상**: 컨테이너에 marquee/drag selection 을 붙였더니 자식 카드의 단일 클릭 토글이 동작하지 않음. 드래그는 됨.
+
+**원인**: 컨테이너 `onPointerDown` 에서 `e.currentTarget.setPointerCapture(e.pointerId)` 호출. 캡처는 후속 pointerup 을 컨테이너로 redirect 시키고, click 이벤트는 그 redirected pointerup 위치에서 합성되므로 **자식 button 의 onClick 이 절대 발화 안 함**. 임계값 미만 움직임이라 `dragged=false` 라도 캡처가 걸려있으면 클릭이 죽는다.
+
+**해결**: 컨테이너에 캡처를 걸지 말고, `onPointerDown` 안에서 `document.addEventListener("pointermove"/"pointerup")` 을 등록하는 패턴 사용. pointer 가 컨테이너를 벗어나도 추적되며 child click 은 native 경로로 정상 발화. drag 가 임계값을 넘은 경우만 `clickGuardRef = true` + `onClickCapture` 로 다음 click 한 번만 swallow. `src/components/ImagePool.tsx::ImageGrid` 참고.
+
+캡처가 정말로 필요한 경우(예: 단일 핸들 드래그처럼 child onClick 을 살릴 필요가 없는 인터랙션)는 그대로 써도 된다 — `BottomTimeline` 의 sprite/range 트랙이 그 예시. 컨테이너의 단일 click 만 발화하면 되는 곳.
+
+### 12.3 absolute child 좌표는 스크롤 컨텐츠 기준
+
+**증상**: marquee 박스가 스크롤 안 한 상태에서는 정상인데, 스크롤 내려서 드래그하면 박스가 안 보임.
+
+**원인**: `position: absolute` 자식은 가장 가까운 `position: relative` 조상(=스크롤 컨테이너) 의 **스크롤 컨텐츠 박스** 기준으로 배치된다. 보이는 viewport 가 아님. 따라서 `top: 50` 은 "스크롤 컨텐츠 맨 위에서 50px" 이고, 컨테이너가 `scrollTop=200` 이면 보이는 영역에서는 위로 150px 빠져 있음.
+
+**해결**: 좌표를 **scroll-content space** 로 통일. pointer 좌표는 `clientY - rect.top + el.scrollTop`, hit-test 도 같은 좌표계로 계산. `ImageGrid` 의 marquee 가 정답 템플릿.
+
+### 12.4 `<img>` 는 기본 draggable — pointerdown 가로챈다
+
+**증상**: pointer 기반 selection/marquee 를 만들었는데 이미지 위에서 드래그 시작하면 브라우저가 이미지 고스트를 따라 움직이고 우리 marquee 가 안 만들어짐. 클릭 토글도 죽음.
+
+**원인**: `<img>` 는 HTML 기본 `draggable=true`. pointerdown 에서 충분히 움직이면 브라우저가 native `dragstart` 를 발화하고, 그 시점에서 우리의 pointer 시퀀스가 abort 됨.
+
+**해결**: 이미지 카드의 `<img>` 에 `draggable={false}` + `onDragStart={e => e.preventDefault()}` (보험) + `pointer-events-none` (pointerdown 이 부모 button 에 바로 떨어지게) + `select-none`. `ImagePool::ImageCard` 참고. 이미지 외에도 `<a>`, selected 상태의 `<input>` 등이 비슷한 native drag 동작을 가질 수 있으니 새 위젯 만들 때 한 번씩 의심할 것.
+
+### 12.5 비디오 핸들러는 React state 가 아니라 element 에서 직접 읽기
+
+**증상**: 비디오 로드 직후 첫 시킹/캡쳐가 동작 안 하거나 0 으로 클램프됨.
+
+**원인**: 핸들러가 React state 의 `duration`/`currentTime` 을 읽는데, 이 값은 video element 의 `loadedmetadata`/`timeupdate` 이벤트로 setState 한 뒤 다음 렌더에서야 반영됨. 클로저는 렌더 시점의 값을 캡처하므로 stale 가능.
+
+**해결**: 핸들러 안에서 `videoRef.current.duration` / `videoRef.current.currentTime` 를 직접 읽기. React state 는 UI 표시용으로만 쓰고, 실제 시킹/클램프 계산에는 element 값을 사용. `FrameExtractionPage::seek` 참고.
+
+### 12.6 키보드 step 기본값은 시각적으로 인지 가능해야
+
+비디오 ±step 키바인딩의 기본 step 이 너무 작으면(예: 0.1s) 사용자는 "동작 안 함" 으로 인지함. 기본 1s, Shift+키 = 5s 정도가 합리적. 정밀 제어가 필요하면 fps 기반 1프레임(`1/fps`) 을 별도 단축키로 노출하는 식으로 분리.

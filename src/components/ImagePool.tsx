@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   bulkTagImages,
   imageBytesUrl,
@@ -11,6 +11,13 @@ import { TagInput } from "./TagInput";
 
 const PAGE_SIZE = 100;
 const NO_TAG_KEY = "__no_tag__";
+// Cap each grid scroller at ~3 rows of 96px thumbnails (gap-2 = 8px). The
+// pool view stays compact regardless of view mode; if more rows are needed
+// the user scrolls inside the grid.
+const GRID_MAX_HEIGHT = "max-h-[336px]";
+// Minimum drag distance before pointerdown→up is treated as a marquee
+// instead of a click. Below this we let the card's onClick fire.
+const MARQUEE_THRESHOLD = 4;
 
 type ViewMode = "all" | "by_resource" | "by_tag" | "matrix";
 
@@ -172,6 +179,26 @@ export function ImagePool({
   const selectAllResults = () => selectIds(filtered.map((i) => i.id), true);
   const clearSelection = () => onSelectionChange({ ids: new Set() });
 
+  /**
+   * Marquee batch behavior: if any image inside the box is currently
+   * unselected, select the whole box; otherwise (every image is already
+   * selected) deselect the whole box. Empty boxes are no-ops.
+   */
+  const marqueeBatchToggle = useCallback(
+    (idsInBox: string[]) => {
+      if (idsInBox.length === 0) return;
+      const allSelected = idsInBox.every((id) => selection.ids.has(id));
+      const next = new Set(selection.ids);
+      if (allSelected) {
+        for (const id of idsInBox) next.delete(id);
+      } else {
+        for (const id of idsInBox) next.add(id);
+      }
+      onSelectionChange({ ids: next });
+    },
+    [selection.ids, onSelectionChange],
+  );
+
   return (
     <section className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-line)] px-3 py-2">
@@ -324,6 +351,7 @@ export function ImagePool({
             images={visible}
             selection={selection}
             onToggle={toggle}
+            onMarqueeBatchToggle={marqueeBatchToggle}
           />
         ) : viewMode === "by_resource" ? (
           <div className="space-y-4">
@@ -336,6 +364,7 @@ export function ImagePool({
                 selection={selection}
                 onToggle={toggle}
                 onSelectAll={() => selectIds(group.images.map((i) => i.id), true)}
+                onMarqueeBatchToggle={marqueeBatchToggle}
               />
             ))}
           </div>
@@ -351,6 +380,7 @@ export function ImagePool({
                 selection={selection}
                 onToggle={toggle}
                 onSelectAll={() => selectIds(group.images.map((i) => i.id), true)}
+                onMarqueeBatchToggle={marqueeBatchToggle}
               />
             ))}
           </div>
@@ -408,23 +438,152 @@ function ImageGrid({
   images,
   selection,
   onToggle,
+  onMarqueeBatchToggle,
 }: {
   projectId: string;
   images: Image[];
   selection: ImageSelection;
   onToggle: (id: string) => void;
+  /**
+   * Called when the user releases a marquee-drag. Receives the ids inside
+   * the box. The pool decides batch behavior (currently: if any of the box
+   * is unselected, select all; otherwise deselect all).
+   */
+  onMarqueeBatchToggle: (idsInBox: string[]) => void;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Marquee position is stored in scroll-content coords (i.e. it includes
+  // scrollTop/scrollLeft) so the absolute-positioned overlay stays glued to
+  // the dragged region even if the user scrolls during the drag.
+  const [marquee, setMarquee] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const clickGuardRef = useRef(false);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const startX = e.clientX - rect.left + el.scrollLeft;
+      const startY = e.clientY - rect.top + el.scrollTop;
+      // We deliberately do NOT call setPointerCapture here. Capturing on
+      // the container would redirect pointerup → click events to the
+      // container instead of the underlying card button, breaking single
+      // click toggle. Document-level listeners give us the same "track
+      // even if pointer leaves the container" guarantee without that.
+      let dragged = false;
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== e.pointerId) return;
+        const r = el.getBoundingClientRect();
+        const curX = ev.clientX - r.left + el.scrollLeft;
+        const curY = ev.clientY - r.top + el.scrollTop;
+        if (!dragged) {
+          if (
+            Math.hypot(curX - startX, curY - startY) < MARQUEE_THRESHOLD
+          ) {
+            return;
+          }
+          dragged = true;
+        }
+        setMarquee({
+          left: Math.min(startX, curX),
+          top: Math.min(startY, curY),
+          width: Math.abs(curX - startX),
+          height: Math.abs(curY - startY),
+        });
+      };
+
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== e.pointerId) return;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+        if (!dragged) {
+          // Below the movement threshold: real click — let the card's
+          // onClick fire normally.
+          return;
+        }
+        const r = el.getBoundingClientRect();
+        const curX = ev.clientX - r.left + el.scrollLeft;
+        const curY = ev.clientY - r.top + el.scrollTop;
+        const ax = Math.min(startX, curX);
+        const ay = Math.min(startY, curY);
+        const bx = Math.max(startX, curX);
+        const by = Math.max(startY, curY);
+        // Hit-test cards via their content-box coordinates inside the
+        // scroll container, so cards currently outside the visible
+        // viewport (but inside the marquee) still register.
+        const hits: string[] = [];
+        const cards = el.querySelectorAll<HTMLElement>("[data-image-id]");
+        cards.forEach((card) => {
+          const cr = card.getBoundingClientRect();
+          const cAx = cr.left - r.left + el.scrollLeft;
+          const cAy = cr.top - r.top + el.scrollTop;
+          const cBx = cAx + cr.width;
+          const cBy = cAy + cr.height;
+          if (cBx < ax || cAx > bx || cBy < ay || cAy > by) return;
+          const id = card.dataset.imageId;
+          if (id) hits.push(id);
+        });
+        if (hits.length > 0) onMarqueeBatchToggle(hits);
+        // Swallow the click that the browser will synthesize on the
+        // pointerdown target so the drag doesn't also flip that single
+        // card's selection.
+        clickGuardRef.current = true;
+        setMarquee(null);
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
+    },
+    [onMarqueeBatchToggle],
+  );
+
+  const onClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (clickGuardRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      clickGuardRef.current = false;
+    }
+  }, []);
+
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2">
-      {images.map((img) => (
-        <ImageCard
-          key={img.id}
-          projectId={projectId}
-          image={img}
-          selected={selection.ids.has(img.id)}
-          onToggle={() => onToggle(img.id)}
+    <div
+      ref={containerRef}
+      onPointerDown={onPointerDown}
+      onClickCapture={onClickCapture}
+      className={`relative overflow-y-auto ${GRID_MAX_HEIGHT} select-none`}
+    >
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2 p-0.5">
+        {images.map((img) => (
+          <ImageCard
+            key={img.id}
+            projectId={projectId}
+            image={img}
+            selected={selection.ids.has(img.id)}
+            onToggle={() => onToggle(img.id)}
+          />
+        ))}
+      </div>
+      {marquee && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute rounded-sm border border-[var(--color-accent)] bg-[var(--color-accent)]/15"
+          style={{
+            left: marquee.left,
+            top: marquee.top,
+            width: marquee.width,
+            height: marquee.height,
+          }}
         />
-      ))}
+      )}
     </div>
   );
 }
@@ -443,7 +602,9 @@ function ImageCard({
   return (
     <button
       type="button"
+      data-image-id={image.id}
       onClick={onToggle}
+      onDragStart={(e) => e.preventDefault()}
       title={image.fileName}
       className={[
         "group relative overflow-hidden rounded-md border bg-black transition",
@@ -459,7 +620,8 @@ function ImageCard({
           alt={image.fileName}
           loading="lazy"
           decoding="async"
-          className="h-full w-full object-cover"
+          draggable={false}
+          className="pointer-events-none h-full w-full object-cover select-none"
         />
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
@@ -486,6 +648,7 @@ function ByResourceGroup({
   selection,
   onToggle,
   onSelectAll,
+  onMarqueeBatchToggle,
 }: {
   projectId: string;
   resource: ResourceSummary | undefined;
@@ -493,6 +656,7 @@ function ByResourceGroup({
   selection: ImageSelection;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
+  onMarqueeBatchToggle: (idsInBox: string[]) => void;
 }) {
   return (
     <div>
@@ -523,12 +687,15 @@ function ByResourceGroup({
           이 그룹 전체 선택
         </button>
       </div>
-      <ImageGrid
-        projectId={projectId}
-        images={images}
-        selection={selection}
-        onToggle={onToggle}
-      />
+      <div className="ml-2 border-l border-[var(--color-line)] pl-3">
+        <ImageGrid
+          projectId={projectId}
+          images={images}
+          selection={selection}
+          onToggle={onToggle}
+          onMarqueeBatchToggle={onMarqueeBatchToggle}
+        />
+      </div>
     </div>
   );
 }
@@ -541,6 +708,7 @@ function ByTagGroup({
   selection,
   onToggle,
   onSelectAll,
+  onMarqueeBatchToggle,
 }: {
   projectId: string;
   tag: string;
@@ -549,6 +717,7 @@ function ByTagGroup({
   selection: ImageSelection;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
+  onMarqueeBatchToggle: (idsInBox: string[]) => void;
 }) {
   const isUntagged = tag === NO_TAG_KEY;
   return (
@@ -575,12 +744,15 @@ function ByTagGroup({
           이 그룹 전체 선택
         </button>
       </div>
-      <ImageGrid
-        projectId={projectId}
-        images={images}
-        selection={selection}
-        onToggle={onToggle}
-      />
+      <div className="ml-2 border-l border-[var(--color-line)] pl-3">
+        <ImageGrid
+          projectId={projectId}
+          images={images}
+          selection={selection}
+          onToggle={onToggle}
+          onMarqueeBatchToggle={onMarqueeBatchToggle}
+        />
+      </div>
     </div>
   );
 }
@@ -607,7 +779,7 @@ function MatrixView({
     );
   }
   return (
-    <div className="overflow-x-auto">
+    <div className={`overflow-auto ${GRID_MAX_HEIGHT}`}>
       <table className="w-full text-[11px]">
         <thead>
           <tr>

@@ -8,15 +8,15 @@ import type { FrameSortOrder } from "../slice";
 // Virtualization constants. Item height is measured at runtime from the first
 // rendered row so we adapt to any layout tweaks — these are only the initial
 // estimate and the overscan buffer.
-const DEFAULT_ITEM_HEIGHT = 90;
+const DEFAULT_ITEM_HEIGHT = 180;
 const OVERSCAN = 6;
 const ITEM_GAP = 6;
 const LIST_PADDING = 8;
 
 /**
- * Compact left-rail thumbnail list. Width is fixed (`w-24`) so the labeling
- * stage always gets the dominant share of the workspace; the strip is meant
- * to be a navigation overview, not a primary surface.
+ * Left-rail thumbnail list. Width is fixed (`w-72`, matching LabelPanel) so
+ * the workspace stays visually balanced — the strip is a navigation overview,
+ * not a primary drawing surface.
  */
 export function FrameStrip() {
   const frames = useStore((s) => s.frames);
@@ -147,63 +147,61 @@ export function FrameStrip() {
 
   if (frames.length === 0) {
     return (
-      <div className="w-24 shrink-0 border-r border-[var(--color-line)] px-2 py-3 text-center text-[10px] text-[var(--color-muted)]">
+      <div className="w-72 shrink-0 border-r border-[var(--color-line)] px-3 py-3 text-center text-xs text-[var(--color-muted)]">
         프레임 없음
       </div>
     );
   }
 
   return (
-    <div className="flex w-24 shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
-      {/* Compact sort + filter controls */}
-      <div className="flex shrink-0 flex-col gap-0.5 border-b border-[var(--color-line)] px-1 py-1">
-        <div className="flex flex-wrap items-center gap-0.5">
-          {(["added", "time"] as FrameSortOrder[]).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setSort(s)}
-              className={[
-                "flex-1 rounded px-1 py-0.5 text-[9px] transition",
-                sort === s
-                  ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                  : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
-              ].join(" ")}
-              title={s === "added" ? "추가순" : "시간순"}
-            >
-              {s === "added" ? "추가" : "시간"}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-0.5">
+    <div className="flex w-72 shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-surface)]">
+      {/* Sort + filter controls */}
+      <div className="flex shrink-0 items-center gap-1 border-b border-[var(--color-line)] px-2 py-1.5 text-[11px]">
+        <span className="text-[var(--color-muted)]">정렬</span>
+        {(["added", "time"] as FrameSortOrder[]).map((s) => (
           <button
+            key={s}
             type="button"
-            onClick={() => setUnlabeledOnly(!unlabeledOnly)}
+            onClick={() => setSort(s)}
             className={[
-              "flex-1 rounded px-1 py-0.5 text-[9px] transition",
-              unlabeledOnly
+              "rounded px-2 py-0.5 transition",
+              sort === s
                 ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
                 : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
             ].join(" ")}
-            title="미라벨만"
+            title={s === "added" ? "추가순" : "시간순"}
           >
-            미라벨
+            {s === "added" ? "추가" : "시간"}
           </button>
-          <button
-            type="button"
-            onClick={() => setRangeFilterEnabled(!rangeFilterEnabled)}
-            disabled={!frameRange}
-            title={frameRange ? "타임라인 범위 내 프레임만 표시" : "타임라인에서 범위를 먼저 설정하세요"}
-            className={[
-              "flex-1 rounded px-1 py-0.5 text-[9px] transition disabled:opacity-40",
-              rangeFilterEnabled && frameRange
-                ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
-            ].join(" ")}
-          >
-            범위
-          </button>
-        </div>
+        ))}
+        <span className="mx-1 h-3 w-px bg-[var(--color-line)]" />
+        <button
+          type="button"
+          onClick={() => setUnlabeledOnly(!unlabeledOnly)}
+          className={[
+            "rounded px-2 py-0.5 transition",
+            unlabeledOnly
+              ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+              : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
+          ].join(" ")}
+          title="미라벨만"
+        >
+          미라벨
+        </button>
+        <button
+          type="button"
+          onClick={() => setRangeFilterEnabled(!rangeFilterEnabled)}
+          disabled={!frameRange}
+          title={frameRange ? "타임라인 범위 내 프레임만 표시" : "타임라인에서 범위를 먼저 설정하세요"}
+          className={[
+            "rounded px-2 py-0.5 transition disabled:opacity-40",
+            rangeFilterEnabled && frameRange
+              ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+              : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
+          ].join(" ")}
+        >
+          범위
+        </button>
       </div>
 
       <div
@@ -264,15 +262,24 @@ export function FrameStrip() {
                       <ShapeOverlay annotations={frameAnns} classById={classById} />
                     </div>
 
-                    {/* Footer: index only — names/timestamps are too big for
-                        a 96px column. Hover via title for the full name. */}
+                    {/* Footer: index · filename · (annotation count or
+                        exception toggle). Wider strip allows the filename
+                        and (optional) timestamp to live next to the index. */}
                     <div
                       title={f.label}
-                      className="flex items-center justify-between gap-1 bg-[var(--color-surface)] px-1.5 py-0.5 text-[9px] tabular-nums text-[var(--color-muted)]"
+                      className="flex items-center gap-1.5 bg-[var(--color-surface)] px-2 py-1 text-[10px] text-[var(--color-muted)]"
                     >
-                      <span>#{originalIdx + 1}</span>
+                      <span className="tabular-nums">#{originalIdx + 1}</span>
+                      <span className="flex-1 truncate text-[var(--color-text)]">
+                        {f.label}
+                      </span>
+                      {typeof f.timestamp === "number" && (
+                        <span className="tabular-nums text-[var(--color-muted)]">
+                          {f.timestamp.toFixed(2)}s
+                        </span>
+                      )}
                       {count > 0 && (
-                        <span className="rounded-full bg-[var(--color-surface-2)] px-1 text-[9px] text-[var(--color-text)]">
+                        <span className="rounded-full bg-[var(--color-surface-2)] px-1.5 text-[10px] text-[var(--color-text)]">
                           {count}
                         </span>
                       )}
@@ -286,13 +293,13 @@ export function FrameStrip() {
                             toggleFrameException(f.id);
                           }}
                           className={[
-                            "rounded-full px-1 text-[9px] cursor-pointer transition",
+                            "rounded-full px-1.5 text-[10px] cursor-pointer transition",
                             excepted
                               ? "bg-[var(--color-accent)]/80 text-white"
                               : "invisible group-hover:visible bg-[var(--color-surface-2)] text-[var(--color-muted)]",
                           ].join(" ")}
                         >
-                          {excepted ? "제외" : "제외"}
+                          제외
                         </span>
                       )}
                     </div>
