@@ -660,6 +660,9 @@ export function FrameExtractionPage({
                     frame: {Math.floor(currentTime * fps)} /{" "}
                     {Math.floor(duration * fps)}
                   </div>
+                  {range && (
+                    <div>range: {Math.floor(span * fps)}프레임</div>
+                  )}
                   <div>fps: {fps.toFixed(2)}</div>
                   <div>min: {(1 / fps).toFixed(3)}s</div>
                 </>
@@ -1073,7 +1076,7 @@ function FrameStripRow({
       onClickCapture={onClickCapture}
       onMouseEnter={onRowMouseEnter}
       onMouseLeave={onRowMouseLeave}
-      className="relative select-none overflow-x-scroll overflow-y-hidden px-3 pb-3"
+      className="relative select-none overflow-x-scroll overflow-y-hidden px-3 pt-2 pb-3"
     >
       <div className="flex min-h-28 items-stretch gap-2">
         {frames.length === 0 ? (

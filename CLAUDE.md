@@ -258,7 +258,8 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 - 페이지는 `BottomTimeline` (§9.2) 을 사용하지 않고 **자체 inline timeline** 을 가진다: sprite preview 트랙 + range 트랙 + 액션 줄 + 좌상단 HUD + 추출 프레임 strip.
 
 **좌상단 HUD** (비디오 영역 `absolute left-2 top-2`):
-- `frame: <current> / <total>` — `Math.floor(currentTime * fps)` / `Math.floor(duration * fps)`
+- `frame: <current> / <total>` — `Math.floor(currentTime * fps)` / `Math.floor(duration * fps)` (비디오의 실제 프레임)
+- `range: <count>프레임` — 현재 `frameRange` 안의 비디오 프레임 수 = `Math.floor(span * fps)` (range 가 있을 때만)
 - `fps: <fps>` — `estimateVideoFps(video)` 결과 (측정 전엔 "측정 중…")
 - `min: <1/fps>s` — fps 기반 최소 step (30fps → 0.033s)
 
