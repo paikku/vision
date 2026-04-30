@@ -11,7 +11,6 @@ import type {
   ResourceSummary,
   ResourceType,
 } from "@/features/resources/types";
-import { TagInput } from "./TagInput";
 
 const PREVIEW_REEL_INTERVAL_MS = 220;
 
@@ -19,8 +18,6 @@ type TypeFilter = "all" | ResourceType;
 
 export type ResourceSelection = {
   resourceId: string | null;
-  // Bag of tags from selected resource for parent surfaces; empty when none.
-  resourceTags: string[];
 };
 
 export function ResourcePool({
@@ -38,30 +35,17 @@ export function ResourcePool({
 }) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [editingTagsId, setEditingTagsId] = useState<string | null>(null);
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
-
-  const allTags = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of resources) for (const t of r.tags) set.add(t);
-    return Array.from(set).sort();
-  }, [resources]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return resources.filter((r) => {
       if (typeFilter !== "all" && r.type !== typeFilter) return false;
-      if (activeTag && !r.tags.includes(activeTag)) return false;
-      if (q) {
-        const inName = r.name.toLowerCase().includes(q);
-        const inTag = r.tags.some((t) => t.toLowerCase().includes(q));
-        if (!inName && !inTag) return false;
-      }
+      if (q && !r.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [resources, search, typeFilter, activeTag]);
+  }, [resources, search, typeFilter]);
 
   const onDelete = async (r: ResourceSummary) => {
     if (
@@ -72,7 +56,7 @@ export function ResourcePool({
       return;
     }
     await apiDeleteResource(projectId, r.id);
-    if (selection.resourceId === r.id) onSelect({ resourceId: null, resourceTags: [] });
+    if (selection.resourceId === r.id) onSelect({ resourceId: null });
     await reload();
   };
 
@@ -86,11 +70,6 @@ export function ResourcePool({
     setEditingNameId(null);
     if (!next || next === r.name) return;
     await updateResource(projectId, r.id, { name: next });
-    await reload();
-  };
-
-  const commitTags = async (r: ResourceSummary, tags: string[]) => {
-    await updateResource(projectId, r.id, { tags });
     await reload();
   };
 
@@ -108,7 +87,7 @@ export function ResourcePool({
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="이름 / 태그 검색"
+          placeholder="이름 검색"
           className="min-w-[160px] flex-1 rounded-md bg-[var(--color-surface-2)] px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
         />
         <FilterChip
@@ -130,24 +109,6 @@ export function ResourcePool({
           Image Batch
         </FilterChip>
       </div>
-
-      {allTags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1 border-b border-[var(--color-line)] px-3 py-1.5 text-[11px]">
-          <span className="mr-1 text-[var(--color-muted)]">tags:</span>
-          <FilterChip active={activeTag === null} onClick={() => setActiveTag(null)}>
-            전체
-          </FilterChip>
-          {allTags.map((t) => (
-            <FilterChip
-              key={t}
-              active={activeTag === t}
-              onClick={() => setActiveTag(activeTag === t ? null : t)}
-            >
-              {t}
-            </FilterChip>
-          ))}
-        </div>
-      )}
 
       {filtered.length === 0 ? (
         <div className="px-3 py-6 text-center text-xs text-[var(--color-muted)]">
@@ -173,8 +134,8 @@ export function ResourcePool({
                     onClick={() =>
                       onSelect(
                         selected
-                          ? { resourceId: null, resourceTags: [] }
-                          : { resourceId: r.id, resourceTags: r.tags },
+                          ? { resourceId: null }
+                          : { resourceId: r.id },
                       )
                     }
                     aria-pressed={selected}
@@ -222,39 +183,14 @@ export function ResourcePool({
                       </span>
                     </div>
 
-                    <div className="mt-1">
-                      {editingTagsId === r.id ? (
-                        <TagInput
-                          value={r.tags}
-                          onChange={(next) => void commitTags(r, next)}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setEditingTagsId(r.id)}
-                          className="flex flex-wrap items-center gap-1 text-left"
-                          title="태그 편집"
-                        >
-                          {r.tags.length === 0 ? (
-                            <span className="text-[10px] text-[var(--color-muted)]">
-                              + 태그 추가
-                            </span>
-                          ) : (
-                            r.tags.map((t) => (
-                              <span
-                                key={t}
-                                className="rounded-full bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px]"
-                              >
-                                {t}
-                              </span>
-                            ))
-                          )}
-                        </button>
-                      )}
-                    </div>
-
                     <div className="mt-1.5 flex items-center gap-3 text-[10px] text-[var(--color-muted)]">
                       <span>{new Date(r.createdAt).toLocaleString()}</span>
+                      {r.type === "video" && r.duration != null && (
+                        <span className="tabular-nums">
+                          {formatDuration(r.duration)}
+                          {r.width && r.height ? ` · ${r.width}×${r.height}` : ""}
+                        </span>
+                      )}
                       {r.type === "video" && (
                         <Link
                           href={`/projects/${projectId}/extract/${r.id}`}
@@ -262,15 +198,6 @@ export function ResourcePool({
                         >
                           Frame Extraction →
                         </Link>
-                      )}
-                      {editingTagsId === r.id && (
-                        <button
-                          type="button"
-                          onClick={() => setEditingTagsId(null)}
-                          className="hover:text-[var(--color-accent)]"
-                        >
-                          편집 종료
-                        </button>
                       )}
                       <button
                         type="button"
@@ -314,6 +241,13 @@ function FilterChip({
       {children}
     </button>
   );
+}
+
+function formatDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "—";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function ResourceTypeBadge({ type }: { type: ResourceType }) {

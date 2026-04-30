@@ -76,6 +76,17 @@ export function ImagePool({
     setPageLimit(PAGE_SIZE);
   }, [search, sourceFilter, tagFilter, selectedResourceId, viewMode]);
 
+  // When the user switches to a different Resource, image-side filters are
+  // very likely stale (a tag/source/search that matched the previous resource
+  // can collapse the new resource to 0). Reset them so the user always sees
+  // the new resource's full image set first.
+  useEffect(() => {
+    if (selectedResourceId === null) return;
+    setSearch("");
+    setSourceFilter("all");
+    setTagFilter(null);
+  }, [selectedResourceId]);
+
   const visible = filtered.slice(0, pageLimit);
   const hasMore = filtered.length > pageLimit;
 
@@ -204,16 +215,27 @@ export function ImagePool({
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-line)] px-3 py-2">
         <div>
           <h2 className="text-xs font-semibold tracking-tight">Image Pool</h2>
-          <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">
-            {filtered.length === images.length
-              ? `${images.length} images`
-              : `${filtered.length} / ${images.length} images`}
+          <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-[var(--color-muted)]">
+            <span>
+              {filtered.length === images.length
+                ? `${images.length} images`
+                : `${filtered.length} / ${images.length} images`}
+            </span>
             {selectedResourceId && (
-              <span className="ml-1">
+              <span>
                 · resource: {resourceById.get(selectedResourceId)?.name ?? selectedResourceId}
               </span>
             )}
-            {tagFilter && <span className="ml-1">· tag: {tagFilter}</span>}
+            {tagFilter && <span>· tag: {tagFilter}</span>}
+            {filtered.length > 0 && selection.ids.size === 0 && (
+              <button
+                type="button"
+                onClick={selectAllResults}
+                className="ml-1 rounded border border-[var(--color-line)] px-1.5 py-0 text-[10px] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              >
+                전체 선택 ({filtered.length})
+              </button>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-1 text-[11px]">
@@ -287,47 +309,48 @@ export function ImagePool({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] px-3 py-2 text-[11px]">
-        <span className="text-[var(--color-muted)]">선택: {selection.ids.size}</span>
-        <button
-          type="button"
-          onClick={selectVisible}
-          className="rounded-md border border-[var(--color-line)] px-2 py-0.5 hover:border-[var(--color-accent)]"
-        >
-          현재 페이지 전체 선택
-        </button>
-        <button
-          type="button"
-          onClick={selectAllResults}
-          className="rounded-md border border-[var(--color-line)] px-2 py-0.5 hover:border-[var(--color-accent)]"
-        >
-          현재 결과 전체 선택 ({filtered.length})
-        </button>
-        <button
-          type="button"
-          onClick={clearSelection}
-          disabled={selection.ids.size === 0}
-          className="rounded-md border border-[var(--color-line)] px-2 py-0.5 disabled:opacity-40 hover:border-[var(--color-line)]"
-        >
-          선택 해제
-        </button>
-        <button
-          type="button"
-          onClick={() => setBulkOpen((v) => !v)}
-          disabled={selection.ids.size === 0}
-          className="rounded-md border border-[var(--color-line)] px-2 py-0.5 disabled:opacity-40 hover:border-[var(--color-accent)]"
-        >
-          태그 일괄…
-        </button>
-        <button
-          type="button"
-          onClick={onStartLabeling}
-          disabled={selection.ids.size === 0}
-          className="ml-auto rounded-md bg-[var(--color-accent)] px-2.5 py-1 font-medium text-black disabled:opacity-40"
-        >
-          Start Labeling
-        </button>
-      </div>
+      {selection.ids.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] bg-[var(--color-accent-soft)] px-3 py-2 text-[11px]">
+          <span className="font-medium text-[var(--color-accent)]">
+            {selection.ids.size}장 선택됨
+          </span>
+          <button
+            type="button"
+            onClick={selectVisible}
+            className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-0.5 hover:border-[var(--color-accent)]"
+          >
+            현재 페이지 전체 선택
+          </button>
+          <button
+            type="button"
+            onClick={selectAllResults}
+            className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-0.5 hover:border-[var(--color-accent)]"
+          >
+            현재 결과 전체 선택 ({filtered.length})
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-0.5 hover:border-[var(--color-line)]"
+          >
+            선택 해제
+          </button>
+          <button
+            type="button"
+            onClick={() => setBulkOpen((v) => !v)}
+            className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2 py-0.5 hover:border-[var(--color-accent)]"
+          >
+            태그 일괄…
+          </button>
+          <button
+            type="button"
+            onClick={onStartLabeling}
+            className="ml-auto rounded-md bg-[var(--color-accent)] px-2.5 py-1 font-medium text-black"
+          >
+            Start Labeling →
+          </button>
+        </div>
+      )}
 
       {bulkOpen && selection.ids.size > 0 && (
         <BulkTagBar
@@ -667,18 +690,6 @@ function ByResourceGroup({
         <span className="text-[10px] text-[var(--color-muted)]">
           {resource?.type === "video" ? "video" : "image_batch"} · {images.length} images
         </span>
-        {resource && resource.tags.length > 0 && (
-          <span className="flex items-center gap-1">
-            {resource.tags.map((t) => (
-              <span
-                key={t}
-                className="rounded-full bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--color-muted)]"
-              >
-                {t}
-              </span>
-            ))}
-          </span>
-        )}
         <button
           type="button"
           onClick={onSelectAll}

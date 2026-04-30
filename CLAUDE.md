@@ -390,7 +390,7 @@ storage/
 
 `/projects/[id]` 가 `MediaLibraryPage` 를 렌더하고, 그 안에서 `ResourcePool` + `ImagePool` 두 패널이 합성됩니다.
 
-- **ResourcePool**: 업로드 묶음 단위 관리. 검색 / type 필터(video/image_batch) / Resource 태그 필터. 비디오 resource 는 hover-reel(`previews/preview-{i}.jpg` 순환). 이름·태그 인라인 편집(`updateResource`). "Frame Extraction →" 링크로 `/projects/[id]/extract/[resourceId]` 이동.
+- **ResourcePool**: 업로드 묶음 단위 관리. 검색 / type 필터(video/image_batch). 비디오 resource 는 hover-reel(`previews/preview-{i}.jpg` 순환), 메타 행에 `duration · WxH` 표기. 이름 인라인 편집(`updateResource`). "Frame Extraction →" 링크로 `/projects/[id]/extract/[resourceId]` 이동. **Resource 자체에는 사용자 노출 태그 UI 가 없다** — 분류 의도는 Image 태그로 통일. 데이터 모델의 `Resource.tags` 필드는 잔존하지만 (호환성) 어떤 UI 도 표시·편집하지 않는다.
 - **ImagePool**: 라벨링 단위 그리드. 4가지 view mode:
   - **All** — 평면 grid
   - **By Resource** — Resource 별 그룹 + "이 그룹 전체 선택"
@@ -404,7 +404,9 @@ storage/
 - **3행 스크롤 캡**: 모든 view mode 에서 `ImageGrid`(또는 `MatrixView`)의 스크롤 컨테이너에 `max-h-[336px]` 를 걸어 ~3행 이상이면 내부 세로 스크롤. By Resource / By Tag 그룹은 그룹별로 각자 캡이 걸리므로 그룹간 비교 시 페이지가 끝없이 길어지지 않는다.
 - **그룹 들여쓰기**: `By Resource` / `By Tag` 그룹은 헤더 다음 그리드 본문에 `ml-2 pl-3 border-l border-[var(--color-line)]` 좌측 가이드라인을 그려 시각적 위계 강조. 헤더 자체는 들여쓰기 안 됨.
 - **Pagination**: `PAGE_SIZE = 100` + "더 보기" 버튼으로 점진 확장. 필터/검색/view 변경 시 자동 리셋. 썸네일은 `loading="lazy"` + `decoding="async"`.
+- **Filter 자동 초기화**: `selectedResourceId` 가 새 값으로 바뀌면 `search` / `sourceFilter` / `tagFilter` 를 즉시 리셋한다. 다른 Resource 로 점프했는데 직전 필터(예: `tag=cat`)가 남아 0장이 되는 혼란을 막기 위해.
 - **Bulk tag**: 선택이 1장 이상일 때 "태그 일괄…" 버튼 → 인라인 `BulkTagBar`. 입력한 태그를 `add`/`remove`/`replace` 모드로 일괄 적용 (`POST /images/tags`). 성공 시 `onImagesMutated()` 로 부모가 재로드.
+- **Selection bar 노출 규칙**: 선택 0 일 때는 액션 바 자체를 숨기고, 헤더에 작은 `[전체 선택 (N)]` 링크 하나만 노출 (entry point 보존). 선택 1+ 가 되는 즉시 accent-soft 배경의 액션 바(`{N}장 선택됨` · `현재 페이지 전체 선택` · `현재 결과 전체 선택` · `선택 해제` · `태그 일괄…` · `Start Labeling →`)가 펼쳐짐. 빈 선택 상태에서 화면을 차지하지 않게 하면서, 선택 인터랙션은 카드 클릭/marquee 로 시작.
 - **Start Labeling**: 선택 1장 이상에서 활성화. `StartLabelingModal` 로 새 LabelSet 생성 또는 기존에 추가 (existing 의 경우 imageIds union → PATCH).
 
 ### 11.5 Frame Extraction (`FrameExtractionPage`)
@@ -436,6 +438,8 @@ storage/
 ### 11.8 업로드 플로우 (`UploadResourceModal`)
 
 비디오는 `createResource({type:"video", file, width, height, duration})` 로 등록 후, `extractFrames(evenlySpacedTimes(duration, PREVIEW_COUNT=10))` → `uploadResourcePreviews()` 로 hover-reel 썸네일 best-effort 업로드. image_batch 는 `createResource({type:"image_batch"})` → `addImagesToResource()` 로 파일 묶음 등록. 업로드 함수들은 `setProgress(label)` + `setProgressPct(0..100|null)` 두 가지를 모두 받아 `ProgressDisplay` 가 phase 라벨 + 결정/비결정 진행 바를 렌더한다.
+
+`MediaLibraryPage` 의 진입점은 단일 `[+ 업로드]` 버튼 하나뿐이며 모달이 `initialMode="video"` 로 열린다. 사용자는 (a) 모달 상단의 `Video / Image Batch` 세그먼트로 직접 모드를 바꾸거나, (b) 파일을 드롭해 자동 분류시킨다 (drag&drop 규칙 아래 참고). 모달은 Resource 태그 입력 UI 를 두지 않으며 `tags` 는 항상 빈 배열로 등록된다 (§11.4 의 Resource 태그 정책).
 
 **Drag & drop**: 모달 박스 자체가 드롭 타겟. 드롭한 파일들의 종류에 따라 `mode` 가 자동 전환됨:
 - 비디오 1개만 → `mode = "video"` 로 스위치 + 그 파일 선택
