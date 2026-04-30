@@ -338,38 +338,40 @@ export function ImagePool({
           프레임
         </ViewModeChip>
 
-        <FilterPopoverChip
-          label="resource"
-          options={resources.map((r) => ({
-            value: r.id,
-            label: r.name,
-            hint: r.type === "video" ? "video" : "images",
-          }))}
-          selected={selectedResourceIds}
-          onChange={onResourceSelectionChange}
-          resolveLabel={(id) => resourceById.get(id)?.name ?? id}
-          emptyHint="Resource 가 없습니다"
-        />
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <FilterPopoverChip
+            label="resource"
+            options={resources.map((r) => ({
+              value: r.id,
+              label: r.name,
+              hint: r.type === "video" ? "video" : "images",
+            }))}
+            selected={selectedResourceIds}
+            onChange={onResourceSelectionChange}
+            resolveLabel={(id) => resourceById.get(id)?.name ?? id}
+            emptyHint="Resource 가 없습니다"
+          />
 
-        <FilterPopoverChip
-          label="tag"
-          options={allImageTags.map((t) => ({ value: t, label: t }))}
-          selected={tagFilter}
-          onChange={setTagFilter}
-          resolveLabel={(t) => t}
-          emptyHint="이미지에 태그가 없습니다"
-        />
+          <FilterPopoverChip
+            label="tag"
+            options={allImageTags.map((t) => ({ value: t, label: t }))}
+            selected={tagFilter}
+            onChange={setTagFilter}
+            resolveLabel={(t) => t}
+            emptyHint="이미지에 태그가 없습니다"
+          />
 
-        {anyFilterActive && (
-          <button
-            type="button"
-            onClick={resetAllFilters}
-            className="ml-auto rounded-md border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)]"
-            title="검색 / source / resource / tag 모두 초기화"
-          >
-            × 필터 초기화
-          </button>
-        )}
+          {anyFilterActive && (
+            <button
+              type="button"
+              onClick={resetAllFilters}
+              className="rounded-md border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)]"
+              title="검색 / source / resource / tag 모두 초기화"
+            >
+              × 필터 초기화
+            </button>
+          )}
+        </div>
       </div>
 
       {selection.ids.size > 0 && (
@@ -601,10 +603,10 @@ function FilterPopoverChip({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         className={[
-          "flex max-w-[180px] items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition",
+          "flex max-w-[180px] items-center gap-1 truncate rounded-md border px-2 py-0.5 text-[11px] transition",
           active
-            ? "bg-[var(--color-accent)] text-black"
-            : "bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-text)]",
+            ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-black"
+            : "border-[var(--color-line)] bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-text)]",
         ].join(" ")}
         title={chipText}
       >
