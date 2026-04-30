@@ -32,6 +32,7 @@ export function ImagePool({
   images,
   resources,
   selectedResourceIds,
+  onResourceSelectionChange,
   selection,
   onSelectionChange,
   onStartLabeling,
@@ -42,6 +43,12 @@ export function ImagePool({
   resources: ResourceSummary[];
   /** When non-empty, only images whose resourceId is in the set are shown. */
   selectedResourceIds: Set<string>;
+  /**
+   * The Resource filter chip in the filter row mirrors `selectedResourceIds`
+   * (sync model). Toggling chips here updates the same parent state that
+   * ResourcePool uses, so both surfaces stay in lockstep.
+   */
+  onResourceSelectionChange: (next: Set<string>) => void;
   selection: ImageSelection;
   onSelectionChange: (next: ImageSelection) => void;
   onStartLabeling: () => void;
@@ -51,7 +58,7 @@ export function ImagePool({
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<Set<string>>(() => new Set());
   const [pageLimit, setPageLimit] = useState(PAGE_SIZE);
   const [bulkOpen, setBulkOpen] = useState(false);
 
@@ -62,6 +69,7 @@ export function ImagePool({
   }, [images]);
 
   const resourceFilterActive = selectedResourceIds.size > 0;
+  const tagFilterActive = tagFilter.size > 0;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -70,11 +78,19 @@ export function ImagePool({
         return false;
       }
       if (sourceFilter !== "all" && img.source !== sourceFilter) return false;
-      if (tagFilter && !img.tags.includes(tagFilter)) return false;
+      if (tagFilterActive && !img.tags.some((t) => tagFilter.has(t))) return false;
       if (q && !img.fileName.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [images, selectedResourceIds, resourceFilterActive, sourceFilter, tagFilter, search]);
+  }, [
+    images,
+    selectedResourceIds,
+    resourceFilterActive,
+    sourceFilter,
+    tagFilter,
+    tagFilterActive,
+    search,
+  ]);
 
   // Reset pagination when the filter set changes.
   useEffect(() => {
@@ -89,8 +105,21 @@ export function ImagePool({
     if (selectedResourceIds.size === 0) return;
     setSearch("");
     setSourceFilter("all");
-    setTagFilter(null);
+    setTagFilter(new Set());
   }, [selectedResourceIds]);
+
+  const anyFilterActive =
+    search.trim() !== "" ||
+    sourceFilter !== "all" ||
+    tagFilterActive ||
+    resourceFilterActive;
+
+  const resetAllFilters = useCallback(() => {
+    setSearch("");
+    setSourceFilter("all");
+    setTagFilter(new Set());
+    if (resourceFilterActive) onResourceSelectionChange(new Set());
+  }, [resourceFilterActive, onResourceSelectionChange]);
 
   const visible = filtered.slice(0, pageLimit);
   const hasMore = filtered.length > pageLimit;
@@ -237,7 +266,14 @@ export function ImagePool({
                   : `${selectedResourceIds.size}개`}
               </span>
             )}
-            {tagFilter && <span>· tag: {tagFilter}</span>}
+            {tagFilterActive && (
+              <span>
+                · tag:{" "}
+                {tagFilter.size === 1
+                  ? Array.from(tagFilter)[0]
+                  : `${tagFilter.size}개`}
+              </span>
+            )}
             {filtered.length > 0 && selection.ids.size === 0 && (
               <button
                 type="button"
@@ -279,9 +315,10 @@ export function ImagePool({
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="파일명 검색"
-          className="min-w-[160px] flex-1 rounded-md bg-[var(--color-surface-2)] px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+          placeholder="파일명"
+          className="w-44 max-w-full rounded-md bg-[var(--color-surface-2)] px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
         />
+        <span className="text-[10px] text-[var(--color-muted)]">source</span>
         <ViewModeChip
           active={sourceFilter === "all"}
           onClick={() => setSourceFilter("all")}
@@ -298,27 +335,42 @@ export function ImagePool({
           active={sourceFilter === "video_frame"}
           onClick={() => setSourceFilter("video_frame")}
         >
-          비디오 프레임
+          프레임
         </ViewModeChip>
-      </div>
 
-      {allImageTags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1 border-b border-[var(--color-line)] px-3 py-1.5 text-[11px]">
-          <span className="mr-1 text-[var(--color-muted)]">image tags:</span>
-          <ViewModeChip active={tagFilter === null} onClick={() => setTagFilter(null)}>
-            전체
-          </ViewModeChip>
-          {allImageTags.map((t) => (
-            <ViewModeChip
-              key={t}
-              active={tagFilter === t}
-              onClick={() => setTagFilter(tagFilter === t ? null : t)}
-            >
-              {t}
-            </ViewModeChip>
-          ))}
-        </div>
-      )}
+        <FilterPopoverChip
+          label="resource"
+          options={resources.map((r) => ({
+            value: r.id,
+            label: r.name,
+            hint: r.type === "video" ? "video" : "images",
+          }))}
+          selected={selectedResourceIds}
+          onChange={onResourceSelectionChange}
+          resolveLabel={(id) => resourceById.get(id)?.name ?? id}
+          emptyHint="Resource 가 없습니다"
+        />
+
+        <FilterPopoverChip
+          label="tag"
+          options={allImageTags.map((t) => ({ value: t, label: t }))}
+          selected={tagFilter}
+          onChange={setTagFilter}
+          resolveLabel={(t) => t}
+          emptyHint="이미지에 태그가 없습니다"
+        />
+
+        {anyFilterActive && (
+          <button
+            type="button"
+            onClick={resetAllFilters}
+            className="ml-auto rounded-md border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:border-[var(--color-danger)] hover:text-[var(--color-danger)]"
+            title="검색 / source / resource / tag 모두 초기화"
+          >
+            × 필터 초기화
+          </button>
+        )}
+      </div>
 
       {selection.ids.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] bg-[var(--color-accent-soft)] px-3 py-2 text-[11px]">
@@ -439,6 +491,216 @@ export function ImagePool({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Multi-select chip with a search-and-checkbox popover.
+ *
+ * Visual states (chip text):
+ *   0 selected  → "{label} 전체"
+ *   1 selected  → "{label}: {resolveLabel(id)}"
+ *   N selected  → "{label}: N개"
+ *
+ * The popover lists every option with a checkbox; the top input filters the
+ * list by substring (case-insensitive). "전체 선택" / "선택 해제" act on the
+ * currently-filtered list so users can scope-select after typing a query.
+ *
+ * Closes on outside click, Escape key, or clicking the chip again.
+ */
+function FilterPopoverChip({
+  label,
+  options,
+  selected,
+  onChange,
+  resolveLabel,
+  emptyHint,
+}: {
+  label: string;
+  options: { value: string; label: string; hint?: string }[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+  resolveLabel: (id: string) => string;
+  emptyHint?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current) return;
+      if (rootRef.current.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Reset the search query whenever the popover closes so reopening is clean.
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  const chipText = (() => {
+    if (selected.size === 0) return `${label} 전체`;
+    if (selected.size === 1) {
+      const id = Array.from(selected)[0];
+      return `${label}: ${resolveLabel(id)}`;
+    }
+    return `${label}: ${selected.size}개`;
+  })();
+
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.label.toLowerCase().includes(q));
+  }, [options, query]);
+
+  const allFilteredSelected =
+    filteredOptions.length > 0 &&
+    filteredOptions.every((o) => selected.has(o.value));
+
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(next);
+  };
+
+  const selectAllFiltered = () => {
+    const next = new Set(selected);
+    for (const o of filteredOptions) next.add(o.value);
+    onChange(next);
+  };
+
+  const clearFiltered = () => {
+    if (filteredOptions.length === options.length) {
+      onChange(new Set());
+      return;
+    }
+    const next = new Set(selected);
+    for (const o of filteredOptions) next.delete(o.value);
+    onChange(next);
+  };
+
+  const active = selected.size > 0;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={[
+          "flex max-w-[180px] items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition",
+          active
+            ? "bg-[var(--color-accent)] text-black"
+            : "bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-text)]",
+        ].join(" ")}
+        title={chipText}
+      >
+        <span className="truncate">{chipText}</span>
+        <span className="shrink-0 opacity-70">▾</span>
+      </button>
+      {open && (
+        <div
+          data-keep-focus
+          className="absolute left-0 top-full z-30 mt-1 w-64 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] shadow-lg"
+        >
+          {options.length === 0 ? (
+            <div className="px-3 py-3 text-center text-[11px] text-[var(--color-muted)]">
+              {emptyHint ?? "옵션이 없습니다"}
+            </div>
+          ) : (
+            <>
+              <div className="border-b border-[var(--color-line)] p-2">
+                <input
+                  type="text"
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={`${label} 검색`}
+                  className="w-full rounded-md bg-[var(--color-surface-2)] px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                />
+                <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--color-muted)]">
+                  <span>
+                    {selected.size > 0 ? `${selected.size}개 선택됨` : "선택 없음"}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={selectAllFiltered}
+                      disabled={allFilteredSelected || filteredOptions.length === 0}
+                      className="hover:text-[var(--color-accent)] disabled:opacity-40"
+                    >
+                      전체 선택
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearFiltered}
+                      disabled={selected.size === 0}
+                      className="hover:text-[var(--color-text)] disabled:opacity-40"
+                    >
+                      해제
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <ul className="max-h-56 overflow-y-auto py-1">
+                {filteredOptions.length === 0 ? (
+                  <li className="px-3 py-2 text-center text-[11px] text-[var(--color-muted)]">
+                    검색 결과 없음
+                  </li>
+                ) : (
+                  filteredOptions.map((o) => {
+                    const isOn = selected.has(o.value);
+                    return (
+                      <li key={o.value}>
+                        <button
+                          type="button"
+                          onClick={() => toggle(o.value)}
+                          className={[
+                            "flex w-full items-center gap-2 px-3 py-1 text-left text-[11px] transition",
+                            isOn
+                              ? "bg-[var(--color-accent-soft)]"
+                              : "hover:bg-[var(--color-surface-2)]",
+                          ].join(" ")}
+                        >
+                          <span
+                            aria-hidden
+                            className={[
+                              "h-3 w-3 shrink-0 rounded-sm border transition",
+                              isOn
+                                ? "border-[var(--color-accent)] bg-[var(--color-accent)]"
+                                : "border-[var(--color-line)]",
+                            ].join(" ")}
+                          />
+                          <span className="flex-1 truncate">{o.label}</span>
+                          {o.hint && (
+                            <span className="shrink-0 text-[10px] text-[var(--color-muted)]">
+                              {o.hint}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })
+                )}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
