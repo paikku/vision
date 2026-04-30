@@ -13,7 +13,7 @@ import {
 import type { MediaSource } from "@/features/media/types";
 import {
   deleteImage,
-  imageBytesUrl,
+  imageThumbUrl,
   listImages,
 } from "@/features/images/service/api";
 import type { Image } from "@/features/images/types";
@@ -25,6 +25,7 @@ import { addImagesToResource } from "@/features/resources/service/api";
 import type { Resource } from "@/features/resources/types";
 
 const HANDLE_HIT_PX = 8;
+const MARQUEE_THRESHOLD = 4;
 
 const BTN_BASE =
   "rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 disabled:cursor-not-allowed";
@@ -204,6 +205,7 @@ export function FrameExtractionPage({
   const dragOriginRef = useRef<{
     pointerTime: number;
     range: Range;
+    restoreTime: number;
   } | null>(null);
 
   const seek = useCallback((t: number) => {
@@ -262,7 +264,12 @@ export function FrameExtractionPage({
       else if (Math.abs(t - range.end) < handleProx) mode = "end";
       else mode = "translate";
       dragModeRef.current = mode;
-      dragOriginRef.current = { pointerTime: t, range: { ...range } };
+      const v = videoRef.current;
+      dragOriginRef.current = {
+        pointerTime: t,
+        range: { ...range },
+        restoreTime: v?.currentTime ?? 0,
+      };
     },
     [duration, range, ratioFromX],
   );
@@ -273,15 +280,13 @@ export function FrameExtractionPage({
       const mode = dragModeRef.current;
       const origin = dragOriginRef.current;
       if (mode === "start") {
-        setRange({
-          start: Math.min(Math.max(0, t), origin.range.end),
-          end: origin.range.end,
-        });
+        const nextStart = Math.min(Math.max(0, t), origin.range.end);
+        setRange({ start: nextStart, end: origin.range.end });
+        seek(nextStart);
       } else if (mode === "end") {
-        setRange({
-          start: origin.range.start,
-          end: Math.max(Math.min(duration, t), origin.range.start),
-        });
+        const nextEnd = Math.max(Math.min(duration, t), origin.range.start);
+        setRange({ start: origin.range.start, end: nextEnd });
+        seek(nextEnd);
       } else {
         const delta = t - origin.pointerTime;
         const width = origin.range.end - origin.range.start;
@@ -291,33 +296,40 @@ export function FrameExtractionPage({
         setRange({ start: nextStart, end: nextStart + width });
       }
     },
-    [duration, ratioFromX],
+    [duration, ratioFromX, seek],
   );
   const onRangePointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
+      const mode = dragModeRef.current;
+      const origin = dragOriginRef.current;
+      if ((mode === "start" || mode === "end") && origin) {
+        seek(origin.restoreTime);
+      }
       dragModeRef.current = null;
       dragOriginRef.current = null;
     },
-    [],
+    [seek],
   );
 
   // ---------- frame markers (existing extracted frames) ----------
 
   const frameMarkers = useMemo(() => {
-    if (!duration) return [] as { id: string; left: number }[];
+    if (!duration) return [] as { id: string; left: number; inRange: boolean }[];
     return frames
       .filter((f) => typeof f.videoFrameMeta?.timestamp === "number")
-      .map((f) => ({
-        id: f.id,
-        left: Math.min(
-          100,
-          Math.max(0, ((f.videoFrameMeta!.timestamp as number) / duration) * 100),
-        ),
-      }));
-  }, [frames, duration]);
+      .map((f) => {
+        const t = f.videoFrameMeta!.timestamp as number;
+        const inRange = range ? t >= range.start && t <= range.end : true;
+        return {
+          id: f.id,
+          left: Math.min(100, Math.max(0, (t / duration) * 100)),
+          inRange,
+        };
+      });
+  }, [frames, duration, range]);
 
   const framesInRange = useMemo(() => {
     if (!range) return [];
@@ -327,6 +339,90 @@ export function FrameExtractionPage({
       return t >= range.start && t <= range.end;
     });
   }, [frames, range]);
+
+  // ---------- selection ----------
+
+  const [selectedFrameIds, setSelectedFrameIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const lastClickedFrameIdRef = useRef<string | null>(null);
+
+  // Drop ids that disappeared (e.g. range moved, deletion).
+  useEffect(() => {
+    setSelectedFrameIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(framesInRange.map((f) => f.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [framesInRange]);
+
+  const toggleFrameSelection = useCallback(
+    (id: string, shiftKey: boolean) => {
+      setSelectedFrameIds((prev) => {
+        const next = new Set(prev);
+        if (shiftKey && lastClickedFrameIdRef.current) {
+          const ids = framesInRange.map((f) => f.id);
+          const a = ids.indexOf(lastClickedFrameIdRef.current);
+          const b = ids.indexOf(id);
+          if (a !== -1 && b !== -1) {
+            const [lo, hi] = a < b ? [a, b] : [b, a];
+            for (let i = lo; i <= hi; i++) next.add(ids[i]);
+            return next;
+          }
+        }
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      lastClickedFrameIdRef.current = id;
+    },
+    [framesInRange],
+  );
+
+  const marqueeBatchToggleFrames = useCallback((idsInBox: string[]) => {
+    if (idsInBox.length === 0) return;
+    setSelectedFrameIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = idsInBox.every((id) => prev.has(id));
+      if (allSelected) for (const id of idsInBox) next.delete(id);
+      else for (const id of idsInBox) next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedFrameIds(new Set());
+    lastClickedFrameIdRef.current = null;
+  }, []);
+
+  const deleteFrames = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      if (!confirm(`선택한 프레임 ${ids.length}개를 삭제할까요?`)) return;
+      const idSet = new Set(ids);
+      setFrames((prev) => prev.filter((f) => !idSet.has(f.id)));
+      setSelectedFrameIds((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+      await Promise.all(ids.map((id) => deleteImage(projectId, id))).catch(
+        () => {},
+      );
+    },
+    [projectId],
+  );
+
+  const deleteSelectedFrames = useCallback(() => {
+    void deleteFrames([...selectedFrameIds]);
+  }, [deleteFrames, selectedFrameIds]);
 
   // ---------- capture / upload pipeline ----------
 
@@ -420,22 +516,6 @@ export function FrameExtractionPage({
     abortRef.current?.abort();
   }, []);
 
-  const removeRangeFrames = useCallback(async () => {
-    if (framesInRange.length === 0 || !range) return;
-    if (
-      !confirm(
-        `현재 범위(${formatTime(range.start)} ~ ${formatTime(range.end)})에 있는 프레임 ${framesInRange.length}개를 삭제할까요?`,
-      )
-    ) {
-      return;
-    }
-    const ids = framesInRange.map((f) => f.id);
-    setFrames((prev) => prev.filter((f) => !ids.includes(f.id)));
-    await Promise.all(ids.map((id) => deleteImage(projectId, id))).catch(
-      () => {},
-    );
-  }, [framesInRange, projectId, range]);
-
   const resetRange = useCallback(() => {
     if (duration) setRange({ start: 0, end: duration });
   }, [duration]);
@@ -470,11 +550,17 @@ export function FrameExtractionPage({
         if (!v) return;
         e.preventDefault();
         seek(v.currentTime + stepSec * (e.shiftKey ? 5 : 1));
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        selectedFrameIds.size > 0
+      ) {
+        e.preventDefault();
+        deleteSelectedFrames();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [captureCurrent, seek, stepSec, togglePlay]);
+  }, [captureCurrent, deleteSelectedFrames, seek, selectedFrameIds, stepSec, togglePlay]);
 
   // ---------- render ----------
 
@@ -501,7 +587,7 @@ export function FrameExtractionPage({
           </div>
         )}
 
-        <div className="flex flex-1 items-center justify-center bg-black">
+        <div className="relative flex flex-1 items-center justify-center bg-black">
           {media ? (
             <video
               ref={videoRef}
@@ -514,6 +600,19 @@ export function FrameExtractionPage({
             />
           ) : (
             <div className="text-xs text-[var(--color-muted)]">불러오는 중…</div>
+          )}
+          {media && (
+            <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-1 font-mono text-[11px] leading-tight text-white tabular-nums">
+              {fps != null ? (
+                <>
+                  <div>frame: {Math.floor(currentTime * fps)}</div>
+                  <div>fps: {fps.toFixed(2)}</div>
+                  <div>min: {(1 / fps).toFixed(3)}s</div>
+                </>
+              ) : (
+                <div>fps: 측정 중…</div>
+              )}
+            </div>
           )}
         </div>
 
@@ -558,7 +657,7 @@ export function FrameExtractionPage({
                 {frameMarkers.map((m) => (
                   <span
                     key={m.id}
-                    className="absolute bottom-0.5 h-2 w-0.5 bg-amber-300"
+                    className={`absolute bottom-0.5 h-2 w-0.5 ${m.inRange ? "bg-amber-300" : "bg-zinc-500"}`}
                     style={{ left: `${m.left}%` }}
                   />
                 ))}
@@ -708,22 +807,33 @@ export function FrameExtractionPage({
 
               <button
                 type="button"
-                disabled={framesInRange.length === 0}
-                onClick={() => void removeRangeFrames()}
+                disabled={selectedFrameIds.size === 0}
+                onClick={deleteSelectedFrames}
                 className={BTN_DANGER}
+                title="선택된 프레임 삭제 (Delete)"
               >
-                범위 {framesInRange.length}개 삭제
+                선택 {selectedFrameIds.size}개 삭제
               </button>
             </div>
           </div>
         )}
 
-        {/* Extracted frames grid */}
+        {/* Extracted frames (single-row, horizontally scrollable) */}
         <section className="border-t border-[var(--color-line)] bg-[var(--color-surface)]">
           <div className="flex items-center gap-2 px-3 py-2">
             <h2 className="text-xs font-semibold tracking-tight">
-              추출된 프레임 · {frames.length}장
+              추출된 프레임 · {framesInRange.length}/{frames.length}장
             </h2>
+            {selectedFrameIds.size > 0 && (
+              <button
+                type="button"
+                onClick={clearSelection}
+                className={BTN_DEFAULT}
+                title="선택 해제"
+              >
+                선택 해제 ({selectedFrameIds.size})
+              </button>
+            )}
             {frames.length > 0 && (
               <Link
                 href={`/projects/${projectId}`}
@@ -733,35 +843,179 @@ export function FrameExtractionPage({
               </Link>
             )}
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2 px-3 pb-3">
-            {frames.map((f) => {
-              const ts = f.videoFrameMeta?.timestamp ?? 0;
-              return (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => seek(ts)}
-                  title={`${f.fileName} · ${formatTime(ts)}`}
-                  className="group relative overflow-hidden rounded-md border border-[var(--color-line)] bg-black hover:border-[var(--color-accent)]/60"
-                >
-                  <div className="aspect-square w-full">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={imageBytesUrl(projectId, f.id)}
-                      alt={f.fileName}
-                      loading="lazy"
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
-                    {formatTime(ts)}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          <FrameStripRow
+            projectId={projectId}
+            frames={framesInRange}
+            selectedIds={selectedFrameIds}
+            onToggle={toggleFrameSelection}
+            onMarqueeBatchToggle={marqueeBatchToggleFrames}
+            onSeekFrame={seek}
+          />
         </section>
       </main>
+    </div>
+  );
+}
+
+function FrameStripRow({
+  projectId,
+  frames,
+  selectedIds,
+  onToggle,
+  onMarqueeBatchToggle,
+  onSeekFrame,
+}: {
+  projectId: string;
+  frames: Image[];
+  selectedIds: Set<string>;
+  onToggle: (id: string, shiftKey: boolean) => void;
+  onMarqueeBatchToggle: (idsInBox: string[]) => void;
+  onSeekFrame: (t: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [marquee, setMarquee] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const clickGuardRef = useRef(false);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const startX = e.clientX - rect.left + el.scrollLeft;
+      const startY = e.clientY - rect.top + el.scrollTop;
+      let dragged = false;
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== e.pointerId) return;
+        const r = el.getBoundingClientRect();
+        const curX = ev.clientX - r.left + el.scrollLeft;
+        const curY = ev.clientY - r.top + el.scrollTop;
+        if (!dragged) {
+          if (Math.hypot(curX - startX, curY - startY) < MARQUEE_THRESHOLD) {
+            return;
+          }
+          dragged = true;
+        }
+        setMarquee({
+          left: Math.min(startX, curX),
+          top: Math.min(startY, curY),
+          width: Math.abs(curX - startX),
+          height: Math.abs(curY - startY),
+        });
+      };
+
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== e.pointerId) return;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+        if (!dragged) return;
+        const r = el.getBoundingClientRect();
+        const curX = ev.clientX - r.left + el.scrollLeft;
+        const curY = ev.clientY - r.top + el.scrollTop;
+        const ax = Math.min(startX, curX);
+        const ay = Math.min(startY, curY);
+        const bx = Math.max(startX, curX);
+        const by = Math.max(startY, curY);
+        const hits: string[] = [];
+        const cards = el.querySelectorAll<HTMLElement>("[data-frame-id]");
+        cards.forEach((card) => {
+          const cr = card.getBoundingClientRect();
+          const cAx = cr.left - r.left + el.scrollLeft;
+          const cAy = cr.top - r.top + el.scrollTop;
+          const cBx = cAx + cr.width;
+          const cBy = cAy + cr.height;
+          if (cBx < ax || cAx > bx || cBy < ay || cAy > by) return;
+          const id = card.dataset.frameId;
+          if (id) hits.push(id);
+        });
+        if (hits.length > 0) onMarqueeBatchToggle(hits);
+        clickGuardRef.current = true;
+        setMarquee(null);
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
+    },
+    [onMarqueeBatchToggle],
+  );
+
+  const onClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (clickGuardRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      clickGuardRef.current = false;
+    }
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      onPointerDown={onPointerDown}
+      onClickCapture={onClickCapture}
+      className="relative select-none overflow-x-auto overflow-y-hidden px-3 pb-3"
+    >
+      <div className="flex min-h-28 items-stretch gap-2">
+        {frames.length === 0 ? (
+          <div className="flex h-24 w-full items-center justify-center text-[11px] text-[var(--color-muted)]">
+            범위 안에 추출된 프레임이 없습니다.
+          </div>
+        ) : (
+          frames.map((f) => {
+            const ts = f.videoFrameMeta?.timestamp ?? 0;
+            const selected = selectedIds.has(f.id);
+            return (
+              <button
+                key={f.id}
+                type="button"
+                data-frame-id={f.id}
+                onClick={(e) => onToggle(f.id, e.shiftKey)}
+                onDoubleClick={() => onSeekFrame(ts)}
+                onDragStart={(e) => e.preventDefault()}
+                title={`${f.fileName} · ${formatTime(ts)} (클릭=선택, Shift+클릭=범위, 더블클릭=시킹)`}
+                className={[
+                  "group relative h-24 w-24 shrink-0 overflow-hidden rounded-md border bg-black transition",
+                  selected
+                    ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]"
+                    : "border-[var(--color-line)] hover:border-[var(--color-accent)]/60",
+                ].join(" ")}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imageThumbUrl(projectId, f.id)}
+                  alt={f.fileName}
+                  loading="lazy"
+                  decoding="async"
+                  draggable={false}
+                  className="pointer-events-none h-full w-full select-none object-cover"
+                />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
+                  {formatTime(ts)}
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+      {marquee && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute rounded-sm border border-[var(--color-accent)] bg-[var(--color-accent)]/15"
+          style={{
+            left: marquee.left,
+            top: marquee.top,
+            width: marquee.width,
+            height: marquee.height,
+          }}
+        />
+      )}
     </div>
   );
 }
