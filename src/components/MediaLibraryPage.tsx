@@ -21,7 +21,7 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
 
   const [resourceSelection, setResourceSelection] = useState<ResourceSelection>({
-    resourceId: null,
+    resourceIds: new Set(),
   });
   const [imageSelection, setImageSelection] = useState<ImageSelection>({
     ids: new Set(),
@@ -117,7 +117,7 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
           projectId={projectId}
           images={images}
           resources={resources}
-          selectedResourceId={resourceSelection.resourceId}
+          selectedResourceIds={resourceSelection.resourceIds}
           selection={imageSelection}
           onSelectionChange={setImageSelection}
           onStartLabeling={() => setLabelingOpen(true)}
