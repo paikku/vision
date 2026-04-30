@@ -605,7 +605,10 @@ export function FrameExtractionPage({
             <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-1 font-mono text-[11px] leading-tight text-white tabular-nums">
               {fps != null ? (
                 <>
-                  <div>frame: {Math.floor(currentTime * fps)}</div>
+                  <div>
+                    frame: {Math.floor(currentTime * fps)} /{" "}
+                    {Math.floor(duration * fps)}
+                  </div>
                   <div>fps: {fps.toFixed(2)}</div>
                   <div>min: {(1 / fps).toFixed(3)}s</div>
                 </>
