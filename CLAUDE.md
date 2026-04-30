@@ -175,7 +175,7 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 1. 클래스 행 hover + `Q/W/E/R` → 단축키 할당 **+ active class 전환**
 2. annotation 행 hover + `D` → hover된 annotation 삭제
 3. annotation 행 hover + `Q/W/E/R` → hover된 annotation의 class 변경
-4. annotation 행 hover + `H` → 서버 세그먼테이션으로 shape refine (`features/annotations/service/segment.ts`, `BACKEND_SEGMENT_REQUIREMENTS.md`)
+4. annotation 행 hover + `H` → 서버 세그먼테이션으로 shape refine (`features/annotations/service/segment.ts`, `BACKEND_SEGMENT_REQUIREMENTS.md`). **`labelSetType === "polygon"` 일 때만 동작** — segmentation 결과는 polygon 이라 bbox/classify LabelSet 컨텍스트에서는 무시됨. 모델 select / shortcut 안내도 polygon LabelSet 에서만 표시.
 5. 소비되지 않은 키 → `useKeyboardShortcuts`(버블 단계)
 
 전역 단축키 (`useKeyboardShortcuts`):
@@ -187,6 +187,7 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 | `1` | 이전 프레임 |
 | `2` | 다음 프레임 |
 | `C` | draw ↔ edit 모드 토글 |
+| `R` / `P` | rect / polygon tool — **`labelSetType === null` 일 때만 활성화**. LabelSet 컨텍스트에서는 type 이 도구를 고정하므로 핫키가 무시되고 `Toolbar` 도 비대화형 badge 로만 표시됨. classify LabelSet 은 `Toolbar` 자체가 숨겨짐 |
 | `Escape` | 진행 중인 draft 취소 |
 
 **포커스 버그 방지** (`src/shared/dom/`):
@@ -214,12 +215,15 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ## 6) FrameStrip (`src/features/frames/ui/FrameStrip.tsx`)
 
+- **고정 폭**: `w-24` (96px) — 라벨링 워크스페이스의 stage 가 dominant 영역이고 strip 은 네비게이션 보조용. 정렬/필터 칩, 썸네일, 풋터 모두 컴팩트.
+- **썸네일 라벨 오버레이**: 각 썸네일 위에 `viewBox="0 0 1 1" preserveAspectRatio="none"` SVG 를 올려 정규화 좌표로 rect/polygon 도형을 그림. fill = class color @ 18% opacity, stroke = class color, `vector-effect: non-scaling-stroke`. classify 어노테이션(쉐이프 없음)은 SVG 대신 `box-shadow: inset 0 0 0 2px <classColor>` 로 썸네일 가장자리에 클래스 색상 테두리. 어노테이션 → frame bucket 맵을 `useMemo` 로 캐싱해 N 개 strip rendering O(annotations) 가 아닌 O(visible).
 - **정렬**: 추가순 / 시간순(timestamp 기준)
 - **필터**: 미라벨(annotation 0개 + `exceptedFrameIds`에 없는 frame) / 범위(`frameRange` 안의 timestamp 만)
   - 범위 필터는 **기본 ON**. 미디어 로드 시 `frameRange = [0, duration]` 으로 초기화되므로 처음에는 보이는 결과가 동일하지만, 사용자가 BottomTimeline 의 핸들을 좁히면 즉시 strip 도 좁혀짐.
-- **제외(except)**: annotation 0개인 frame에 표시. 미라벨 필터에서 제외됨. 썸네일 하단 좌측 배지 영역에 인라인 표시 (class 배지와 동일 위치)
-- **Class 배지**: frame 하단에 class별 annotation 수를 색상 pill로 표시
+- **제외(except)**: annotation 0개인 frame에 표시. 미라벨 필터에서 제외됨. 썸네일 하단 풋터에서 hover 시 표시.
+- **카운트 배지**: frame 하단 풋터에 총 annotation 수만 표시 (96px 폭에 클래스별 pill 은 들어가지 않음).
 - active frame 변경 시 `scrollIntoView({ block: "nearest" })`로 자동 스크롤
+- 가상화: `DEFAULT_ITEM_HEIGHT = 90`, `OVERSCAN = 6`. 첫 렌더 row 의 `getBoundingClientRect().height + ITEM_GAP` 로 actual stride 측정 후 적용.
 
 ---
 
@@ -363,6 +367,8 @@ storage/
 
 `/projects/[id]/extract/[resourceId]` — 비디오 resource → Image(`source = "video_frame"`) 추출 단독 페이지. video element + sprite + `BottomTimeline`(범위 트랙·균등캡쳐·현재 캡쳐) 을 자체 마운트. 추출된 프레임은 `addImagesToResource(projectId, resourceId, [...])` 로 서버에 즉시 등록되며, 클라이언트가 ID 를 미리 할당하므로 추출 직후 Media Library 로 돌아가도 동일한 Image id 를 본다.
 
+**비디오 surface 클릭 = 처음으로 되돌림**: `<video>` 를 감싼 검은 영역 onClick 핸들러가 `pause()` + `currentTime = 0`. seek 는 하단 sprite/range 트랙이 전담하므로 비디오 위 클릭이 우발적으로 cursor 를 옮기지 않게 한 것 — 한 번 다시 처음부터 보고 싶을 때 빠른 제스처가 됨. 커서는 `cursor-pointer` 로 클릭 가능함을 시각화.
+
 ### 11.6 LabelSet 워크스페이스 하이드레이션 (`LabelingWorkspace`)
 
 `/projects/[id]/labelsets/[lsid]` — 마운트 시:
@@ -385,7 +391,16 @@ storage/
 
 ### 11.8 업로드 플로우 (`UploadResourceModal`)
 
-`MediaDropzone` 을 `onComplete` 콜백 모드로 재사용. 비디오는 `createResource({type:"video", file, width, height, duration})` 로 등록 후, `extractFrames(evenlySpacedTimes(duration, PREVIEW_COUNT=10))` → `uploadResourcePreviews()` 로 hover-reel 썸네일 best-effort 업로드. image_batch 는 `createResource({type:"image_batch"})` → `addImagesToResource()` 로 파일 묶음 등록.
+비디오는 `createResource({type:"video", file, width, height, duration})` 로 등록 후, `extractFrames(evenlySpacedTimes(duration, PREVIEW_COUNT=10))` → `uploadResourcePreviews()` 로 hover-reel 썸네일 best-effort 업로드. image_batch 는 `createResource({type:"image_batch"})` → `addImagesToResource()` 로 파일 묶음 등록. 업로드 함수들은 `setProgress(label)` + `setProgressPct(0..100|null)` 두 가지를 모두 받아 `ProgressDisplay` 가 phase 라벨 + 결정/비결정 진행 바를 렌더한다.
+
+**Drag & drop**: 모달 박스 자체가 드롭 타겟. 드롭한 파일들의 종류에 따라 `mode` 가 자동 전환됨:
+- 비디오 1개만 → `mode = "video"` 로 스위치 + 그 파일 선택
+- 이미지만 → `mode = "image_batch"` 로 스위치 + 모든 이미지 선택
+- 혼합 / 알 수 없는 종류 → 현재 `mode` 의 inferMediaKind 필터로 fallback
+- `name` 필드가 비어 있으면 첫 파일명에서 확장자를 떼서 자동 prefill
+- 드래그 중 모달 외곽이 accent ring 으로 강조
+
+**디코딩 진행률 시각화**: `normalize()` 가 `progress: 0..1` 을 보고하면 그 값을 그대로 % 로 표시. 보고 가능한 진행률이 없는 phase (server backend 가 % 를 안 주는 경우, ffmpeg.wasm `local` phase) 에는 `setInterval(400ms)` 로 95% 까지 점근하는 pseudo progress 를 굴려 사용자가 "멈춤" 으로 오해하지 않게 한다 — 다음 phase 진입 시점에 `clearInterval` + `setProgressPct(null)` 로 리셋되고, 결정 % 가 들어오면 즉시 점근 progress 를 끈다. 미리보기 추출 phase 에서는 `extractFrames({onProgress: (done, total) => setProgressPct((done/total)*100)})` 로 실제 진행률 사용.
 
 ### 11.9 Export (`features/export`)
 

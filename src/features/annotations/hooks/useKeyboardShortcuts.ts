@@ -95,7 +95,12 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // 5. Tool shortcuts
+      // 5. Tool shortcuts — only honored when the LabelSet does NOT fix a
+      // tool. polygon/bbox/classify LabelSets all pin their tool at hydration
+      // time; allowing R/P here would let the user draw the wrong shape kind
+      // and have it rejected when saved.
+      const labelSetType = useStore.getState().labelSetType;
+      if (labelSetType !== null) return;
       const tool = TOOL_LIST.find(
         (t) => !t.disabled && t.shortcut?.toLowerCase() === key,
       );

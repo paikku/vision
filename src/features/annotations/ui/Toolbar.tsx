@@ -1,41 +1,54 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { TOOL_LIST } from "../tools/registry";
+import { TOOLS, TOOL_LIST } from "../tools/registry";
 import type { ToolId } from "../types";
 
-// Keyboard shortcuts for tools are handled by useKeyboardShortcuts (Workspace).
-
+/**
+ * Tool palette. The LabelSet's `type` fixes which tool is active — the user
+ * cannot pick a different one. We render the locked tool as a visible (but
+ * non-interactive) badge so the workspace still shows what kind of LabelSet
+ * is in scope, and which keyboard hotkey applies.
+ */
 export function Toolbar() {
   const activeToolId = useStore((s) => s.activeToolId);
-  const setActiveTool = useStore((s) => s.setActiveTool);
   const labelSetType = useStore((s) => s.labelSetType);
 
   // The Toolbar is shape-tool only — for classify there is nothing to pick.
   if (labelSetType === "classify") return null;
 
+  // Map the LabelSet type → the single allowed tool so the badge below
+  // always matches what the LabelSet says, even if `activeToolId` drifts.
+  const lockedToolId: ToolId | null =
+    labelSetType === "bbox"
+      ? "rect"
+      : labelSetType === "polygon"
+        ? "polygon"
+        : null;
+  const tool = lockedToolId ? TOOLS[lockedToolId] : null;
+  const renderList = tool
+    ? [tool]
+    : TOOL_LIST.filter((t) => t.id !== "classify" && t.id !== "mask");
+
   return (
     <div className="flex flex-col items-center gap-1 border-r border-[var(--color-line)] bg-[var(--color-surface)] px-1.5 py-3">
-      {TOOL_LIST.filter((t) => t.id !== "classify").map((tool) => {
-        const active = tool.id === activeToolId;
+      {renderList.map((t) => {
+        const active = t.id === activeToolId;
         return (
-          <button
-            type="button"
-            key={tool.id}
-            disabled={tool.disabled}
-            onClick={() => setActiveTool(tool.id as ToolId)}
-            title={`${tool.name}${tool.shortcut ? ` (${tool.shortcut})` : ""}${tool.disabled ? " · coming soon" : ""}`}
+          <div
+            key={t.id}
+            aria-disabled
+            title={`${t.name}${t.shortcut ? ` (${t.shortcut})` : ""} · LabelSet 타입에 따라 고정`}
             className={[
-              "flex h-10 w-10 items-center justify-center rounded-md text-[var(--color-muted)] transition",
-              tool.disabled
-                ? "cursor-not-allowed opacity-40"
-                : active
-                  ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                  : "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]",
+              "flex h-10 w-10 items-center justify-center rounded-md text-[var(--color-muted)]",
+              "cursor-not-allowed",
+              active
+                ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                : "opacity-60",
             ].join(" ")}
           >
-            <ToolIcon id={tool.id as ToolId} />
-          </button>
+            <ToolIcon id={t.id as ToolId} />
+          </div>
         );
       })}
     </div>
