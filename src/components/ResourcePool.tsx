@@ -336,6 +336,10 @@ function PreviewReel({
 }) {
   const count = resource.previewCount ?? 0;
   const [hover, setHover] = useState(false);
+  // Frames 1..N-1 are only mounted after the user actually hovers, so an idle
+  // ResourcePool fires one fetch per video instead of N. Once mounted they stay
+  // in the DOM so subsequent hovers don't flash.
+  const [mountedAll, setMountedAll] = useState(false);
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
@@ -348,18 +352,25 @@ function PreviewReel({
     if (!hover) setIdx(0);
   }, [hover]);
 
+  const renderCount = mountedAll ? count : Math.min(1, count);
+
   return (
     <div
       className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-black"
-      onMouseEnter={() => setHover(true)}
+      onMouseEnter={() => {
+        setHover(true);
+        setMountedAll(true);
+      }}
       onMouseLeave={() => setHover(false)}
     >
-      {Array.from({ length: count }).map((_, i) => (
+      {Array.from({ length: renderCount }).map((_, i) => (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           key={i}
           src={resourcePreviewUrl(projectId, resource.id, i)}
           alt=""
+          loading="lazy"
+          decoding="async"
           className={[
             "absolute inset-0 h-full w-full object-cover transition-opacity",
             i === idx ? "opacity-100" : "opacity-0",

@@ -669,6 +669,57 @@ export async function readImageBytes(
   }
 }
 
+// Thumbnail size used by pool/grid views. One canonical size keeps storage
+// simple and is large enough for 96px cards on HiDPI displays.
+const THUMB_MAX = 384;
+
+function thumbPath(projectId: string, imageId: string): string {
+  return path.join(imageDir(projectId, imageId), `thumb-${THUMB_MAX}.jpg`);
+}
+
+/**
+ * Lazy-generated JPEG thumbnail. Reads the cached file if present; otherwise
+ * decodes the original, downscales with sharp, writes the result, and returns
+ * it. Concurrent callers for the same image are serialized via withFileLock so
+ * we never encode the same thumbnail twice.
+ */
+export async function readImageThumb(
+  projectId: string,
+  imageId: string,
+): Promise<Buffer | null> {
+  const tp = thumbPath(projectId, imageId);
+  try {
+    return await fs.readFile(tp);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  return withFileLock(tp, async () => {
+    try {
+      return await fs.readFile(tp);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    const src = await readImageBytes(projectId, imageId);
+    if (!src) return null;
+    const { default: sharp } = await import("sharp");
+    const out = await sharp(src.data)
+      .rotate()
+      .resize(THUMB_MAX, THUMB_MAX, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 75, mozjpeg: true })
+      .toBuffer();
+    await ensureDir(path.dirname(tp));
+    const tmp = `${tp}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
+    try {
+      await fs.writeFile(tmp, out);
+      await fs.rename(tmp, tp);
+    } catch (e) {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+      throw e;
+    }
+    return out;
+  });
+}
+
 // ============================================================
 // LabelSets
 // ============================================================

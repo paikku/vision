@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   bulkTagImages,
-  imageBytesUrl,
+  imageThumbUrl,
 } from "@/features/images/service/api";
 import type { Image, ImageSource } from "@/features/images/types";
 import type { ResourceSummary } from "@/features/resources/types";
@@ -616,7 +616,7 @@ function ImageCard({
       <div className="aspect-square w-full">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={imageBytesUrl(projectId, image.id)}
+          src={imageThumbUrl(projectId, image.id)}
           alt={image.fileName}
           loading="lazy"
           decoding="async"

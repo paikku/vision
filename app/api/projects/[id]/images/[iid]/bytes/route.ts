@@ -10,7 +10,7 @@ export async function GET(
   return new Response(new Uint8Array(result.data), {
     headers: {
       "content-type": mimeForExt(result.ext),
-      "cache-control": "private, max-age=300",
+      "cache-control": "private, max-age=31536000, immutable",
     },
   });
 }
