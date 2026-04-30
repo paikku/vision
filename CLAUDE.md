@@ -207,7 +207,7 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 - `isEditableElement` — 단축키 핸들러용 broad predicate. 지금 타이핑 중인지 판단(텍스트 input, textarea, select, contenteditable 모두 true).
 - `isTextInputElement` — focus 유지 가치 판단용 strict predicate. 진짜 텍스트 입력만 true(`<select>`/checkbox/radio/color/range 등은 false).
-- `useReleaseNonTextFocus(rootRef)` — shell(`Workspace`, `ProjectWorkspace`)에서 한 번 호출. root에 capture-phase로 `pointerup`/`change`/`keyup` 리스너를 달고, 인터랙션 종료 후 `requestAnimationFrame`에서 `document.activeElement`가 `isTextInputElement` 아니면 `blur()`. select 드롭다운은 정상 동작하고, 값 선택 후에만 포커스가 풀림. Tab 키 네비게이션은 트리거하지 않아 키보드 접근성 보존.
+- `useReleaseNonTextFocus(rootRef)` — shell(`LabelingWorkspace`, `FrameExtractionPage`)에서 한 번 호출. root에 capture-phase로 `pointerup`/`change`/`keyup` 리스너를 달고, 인터랙션 종료 후 `requestAnimationFrame`에서 `document.activeElement`가 `isTextInputElement` 아니면 `blur()`. select 드롭다운은 정상 동작하고, 값 선택 후에만 포커스가 풀림. Tab 키 네비게이션은 트리거하지 않아 키보드 접근성 보존.
 - Opt-out: `data-keep-focus` 속성을 가진 요소(또는 그 조상)는 자동 blur 대상에서 제외. 모달 focus trap 등 의도적으로 포커스를 잡고 싶은 위젯용.
 - 새 인터랙티브 위젯(button/select/checkbox 등)을 추가할 때 별도 blur 처리를 할 필요 없음 — shell의 훅이 일괄 처리.
 
@@ -228,23 +228,34 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ## 6) FrameStrip (`src/features/frames/ui/FrameStrip.tsx`)
 
+추출 페이지의 "캡쳐된 프레임" 스트립이자, 라벨링 워크스페이스의 "이미지" 사이드 패널이다 — 같은 컴포넌트를 두 곳에서 재사용한다. 보이는 항목은 store 의 `selectVisibleFrames(...)` 셀렉터가 결정.
+
 - **정렬**: 추가순 / 시간순(timestamp 기준)
-- **필터**: 미라벨(annotation 0개 + `exceptedFrameIds`에 없는 frame) / 범위(`frameRange` 안의 timestamp 만)
-  - 범위 필터는 **기본 ON**. 미디어 로드 시 `frameRange = [0, duration]` 으로 초기화되므로 처음에는 보이는 결과가 동일하지만, 사용자가 BottomTimeline 의 핸들을 좁히면 즉시 strip 도 좁혀짐.
+- **필터**: 미라벨(annotation **+ classification** 0개 + `exceptedFrameIds`에 없는 frame) / 범위(`frameRange` 안의 timestamp 만)
+  - 범위 필터는 추출 페이지에서만 의미 있음. 라벨링 워크스페이스는 hydrate 시 `rangeFilterEnabled: false` + `frameRange: null` 이라 범위 트랙 없이도 전체가 그대로 보임.
 - **제외(except)**: annotation 0개인 frame에 표시. 미라벨 필터에서 제외됨. 썸네일 하단 좌측 배지 영역에 인라인 표시 (class 배지와 동일 위치)
-- **Class 배지**: frame 하단에 class별 annotation 수를 색상 pill로 표시
+- **Class 배지**: frame 하단에 class별 annotation 수를 색상 pill로 표시 (classify 라벨셋이라면 classification 1개당 1개 pill).
 - active frame 변경 시 `scrollIntoView({ block: "nearest" })`로 자동 스크롤
 
 ---
 
 ## 7) LabelPanel (`src/features/annotations/ui/LabelPanel.tsx`)
 
+라벨셋의 `taskType` (`bbox` / `polygon` / `classify`) 에 따라 패널이 두 갈래로 갈라진다.
+
+### bbox / polygon (shape annotation)
 - **Class 관리**: 색상 클릭(color picker), 이름 인라인 편집, Q/W/E/R 단축키 할당
 - **Annotation 우클릭**: 컨텍스트 메뉴 → "일괄 적용…" → `BulkApplyModal`
 - **일괄 적용 모달** (`src/features/annotations/ui/BulkApplyModal.tsx`):
   - 전체 frame 썸네일(기본 전체 선택), 정렬/필터 컨트롤
   - 썸네일 우클릭 → 기준 frame 직전·직후 일괄 선택/해제
   - 적용 시 annotation의 shape/class를 선택된 frame에 복사
+
+### classify (image-level)
+- 동일한 class 관리 행을 그대로 사용하지만, annotation 목록 자리는 active image 의 클래스 체크리스트로 바뀐다 (`toggleClassification`).
+- 한 이미지가 여러 클래스를 가질 수 있다 (multi-label). 단 클래스당 최대 1개.
+- Q/W/E/R 단축키는 active image 에 해당 클래스를 토글 (annotation 추가/삭제가 아니라 classification 토글).
+- shape 도구 / Toolbar / shape 단축키 (`R`/`P` 등 도구 전환) 는 classify 라벨셋에서는 의미가 없어 비활성.
 
 ---
 
@@ -258,25 +269,24 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ## 9) 비디오 타임라인/프레임 추출 파이프라인
 
-워크스페이스 중앙 패널은 shell 인 `MainMediaPanel` 이 통합 오너 한다. 비디오 element / sprite / fps / time / busy 등 비디오 상태는 모두 여기에 있고, 하단 타임라인은 feature 컴포넌트 `BottomTimeline` 에 위임한다.
+비디오 재생/스크럽/프레임 추출은 **프레임 추출 페이지(`FrameExtractionPage`)** 한 곳에서만 일어난다 (`/projects/[id]/resources/[rid]/extract`). 라벨링 워크스페이스는 비디오 element 를 띄우지 않는다.
 
-### 9.1 `MainMediaPanel` (`src/components/MainMediaPanel.tsx`)
+### 9.1 `FrameExtractionPage` (`src/components/FrameExtractionPage.tsx`)
 
-- 비디오 element 는 **항상 마운트** (video 모드 = 보임 / frame 모드 = `display:none`). fps 추정·sprite·seek·`captureCurrent` 가 모드 전환 시 끊기지 않게 하기 위함.
-- `centerViewMode === "video"`: 비디오 + 스텝 입력 패널.
-- `centerViewMode === "frame"`: `<AnnotationStage />` + 우하단에 "비디오 재생으로 전환" 텍스트 버튼만 (mini PIP 비디오는 없음).
-- video 모드일 때 `<Toolbar />` 는 `ProjectWorkspace`/`Workspace` 에서 숨김.
-- 키보드: video 모드는 `Space/C/←/→`, frame 모드는 `↑/↓` 만 처리.
-- `seek(t)` 는 video 모드면 그냥 `currentTime` 갱신, frame 모드에서 호출되면 `centerViewMode = "video"` 로 전환 + `pause()` + `currentTime` 설정 → BottomTimeline 트랙 클릭 한 번으로 정지된 비디오 화면으로 자연스럽게 넘어옴.
+- 비디오 element 는 페이지 라이프타임 동안 항상 마운트 — fps 추정·sprite·seek·`captureCurrent` 가 끊기지 않게.
+- 상단: 비디오 + 스텝 입력 패널 (←/→ 단위 초, fps 추정값 + "1프레임" 자동 설정 버튼).
+- 하단: `<BottomTimeline>` 단일 컴포넌트가 sprite scrubber + range 트랙 + 액션 줄을 모두 담당.
+- 키보드: `Space/C/←/→` 만 처리 (`↑/↓` 등 라벨링용 키는 라벨링 워크스페이스에서만 활성).
+- 진행 중인 추출이 있더라도 store 의 `frames` 변경 effect 가 즉시 서버 업로드를 흘려보내므로 (§11.5), strip / 마커가 실시간으로 갱신된다.
 
 ### 9.2 `BottomTimeline` (`src/features/media/ui/BottomTimeline.tsx`)
 
-video 모드와 frame 모드에 동일하게 표시되는 통합 하단 영역. 세 줄로 구성:
+프레임 추출 페이지 하단 통합 영역. 세 줄로 구성:
 
-1. **Sprite preview / scrubber 트랙** — `pointerdown/move/up` 으로 클릭 + 드래그 모두 seek. 별도 hover 팝업은 두지 않음. cursor 라인은 video 모드면 `video.currentTime`, frame 모드면 active frame 의 timestamp.
+1. **Sprite preview / scrubber 트랙** — `pointerdown/move/up` 으로 클릭 + 드래그 모두 seek. 별도 hover 팝업은 두지 않음. cursor 라인은 `video.currentTime`.
    - 프레임 마커 3색: 현재 선택 frame = accent / 필터 통과 = amber / 필터 제외 = zinc dim.
 2. **Range 트랙** — handle 항상 표시. handle 드래그 = resize, 본문/빈영역 드래그 = width 유지 평행이동(0~duration 클램프). `frameRange` 는 범위 필터와 균등 캡쳐 모두의 단일 source.
-3. **단일 액션 줄** — 모든 버튼이 같은 베이스 클래스(`BTN_BASE`)와 변형(`BTN_DEFAULT`/`BTN_PRIMARY`/`BTN_DANGER`)을 공유. 좌→우: ▶/⏸ 토글 · `현재시간/전체시간` · 범위 라벨 · `초기화` · `현재 캡쳐`(video 모드만) · `N초 [입력] (min~max · n개)` · `균등캡쳐` · `범위 N개 삭제`.
+3. **단일 액션 줄** — 모든 버튼이 같은 베이스 클래스(`BTN_BASE`)와 변형(`BTN_DEFAULT`/`BTN_PRIMARY`/`BTN_DANGER`)을 공유. 좌→우: ▶/⏸ 토글 · `현재시간/전체시간` · 범위 라벨 · `초기화` · `현재 캡쳐` · `N초 [입력] (min~max · n개)` · `균등캡쳐` · `범위 N개 삭제`.
    - **N초 입력**: 로컬 draft 상태로 받고 **blur 또는 Enter 에서만 commit**. ESC 로 되돌림. min/max 는 fps 기반 (`minInterval = 1/fps`, `maxInterval = span`) 으로 자동 클램프 — 그 외 값은 입력 자체가 차단됨. 결과 개수도 commit 후에만 갱신.
    - **균등캡쳐 위치 산출**: `times = [start + (i+0.5)*interval for i in 0..floor(span/interval))]` — 중앙 정렬, 양 끝점 제외.
 
@@ -288,7 +298,7 @@ video 모드와 frame 모드에 동일하게 표시되는 통합 하단 영역. 
   - `onFrame: (frame) => void` — 인코딩 끝나는 즉시 emit. BottomTimeline 의 균등캡쳐가 이걸 `addFrames([f])` 로 흘려 넣어서 진행 중 strip / 마커가 실시간 갱신됨.
   - `signal: AbortSignal` — abort 되면 in-flight seek/encode 마무리 후 break. 이미 emit 된 프레임은 그대로 store 에 남음. UI 의 "중지" 버튼이 이걸 트리거.
 
-### 9.4 단축키 (video 모드)
+### 9.4 단축키 (FrameExtractionPage)
 
 - `Space`: 재생/일시정지
 - `C`: 현재 프레임 캡쳐
@@ -298,12 +308,12 @@ video 모드와 frame 모드에 동일하게 표시되는 통합 하단 영역. 
 
 ## 10) 유지보수 메모
 
-- `MediaSource`는 `file?: File` 포함 (worker 전처리용)
-- sprite/object URL은 cleanup에서 revoke해 메모리 누수 방지
-- 무거운 작업은 worker/헬퍼 함수로 분리해 UI 인터랙션 블로킹 방지
-- 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
-- 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지). video 모드일 땐 `Toolbar` 도 숨김.
-- 비디오 타임라인 + 추출 컨트롤은 `src/features/media/ui/BottomTimeline.tsx` 단일 컴포넌트가 담당. 양 모드 모두 하단에 동일하게 노출됨.
+- `MediaSource` 는 `file?: File` 포함 (worker 전처리용). 추출 페이지에서는 서버 source 를 fetch → `File` 로 감싸 `MediaSource` 를 조립한다.
+- sprite/object URL 은 cleanup 에서 revoke 해 메모리 누수 방지.
+- 무거운 작업은 worker/헬퍼 함수로 분리해 UI 인터랙션 블로킹 방지.
+- 비디오 정규화 파이프라인 (`src/features/media/service/normalize.ts`): 서버 어댑터 (`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백. `UploadResourceModal` 의 video 모드만 이 경로를 탄다.
+- 라벨링 워크스페이스 (`/labelsets/[lsid]`) 는 비디오 / BottomTimeline / `frameRange` 를 사용하지 않는다 — `media: null`, `rangeFilterEnabled: false` 로 hydrate.
+- 비디오 타임라인 + 추출 컨트롤은 `src/features/media/ui/BottomTimeline.tsx` 단일 컴포넌트가 담당하며, 사용처는 `FrameExtractionPage` 한 군데뿐.
 
 ---
 
