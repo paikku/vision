@@ -1,9 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  deleteProject,
-  getProject,
-  listVideos,
-} from "@/lib/server/storage";
+import { deleteProject, getProject } from "@/lib/server/storage";
 
 export async function GET(
   _req: Request,
@@ -14,8 +10,7 @@ export async function GET(
   if (!project) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  const videos = await listVideos(id);
-  return NextResponse.json({ project, videos });
+  return NextResponse.json({ project });
 }
 
 export async function DELETE(
