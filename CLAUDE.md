@@ -18,12 +18,14 @@ npm run lint       # next lint 기반 ESLint
 ## 2) 아키텍처 개요
 
 - **Stack**: Next.js 15 (App Router), React 19, Zustand 5, Tailwind v4, TypeScript(strict)
-- 앱 진입점은 `/` → `/projects` 리디렉션(`app/page.tsx`)입니다. 라벨링 워크스페이스는 특정 비디오 URL(`/projects/[id]/videos/[vid]`) 하위에 위치합니다.
+- 앱 진입점은 `/` → `/projects` 리디렉션(`app/page.tsx`)입니다.
 - 라우트 구성:
   - `/projects` — 프로젝트 목록/생성/삭제 (`ProjectsPage`)
-  - `/projects/[id]` — 비디오 테이블·프레임 그리드·다운로드 (`ProjectDetailPage`)
-  - `/projects/[id]/videos/[vid]` — 어노테이션 워크스페이스 (`ProjectWorkspace`)
-- 라벨링 워크스페이스는 페이지 마운트 시 `getVideoData()`로 서버 데이터를 가져와 store를 hydrate한 뒤 `media`가 채워지면 렌더됩니다.
+  - `/projects/[id]` — Media Library (Resource Pool + Image Pool, `MediaLibraryPage`)
+  - `/projects/[id]/extract/[resourceId]` — 비디오 → 프레임 추출 단독 페이지 (`FrameExtractionPage`)
+  - `/projects/[id]/labelsets` — LabelSet 목록 (`LabelSetsPage`)
+  - `/projects/[id]/labelsets/[lsid]` — 라벨링 워크스페이스 (`LabelingWorkspace`)
+- 라벨링 워크스페이스는 마운트 시 LabelSet meta + annotations + 멤버 이미지를 가져와 store를 hydrate하고, classes 가 비어있으면 기본 class 1개로 seed합니다. 추출 페이지는 별도 store 슬라이스 없이 비디오 element + capture 서비스만 사용합니다.
 
 ### Feature 경계 (중요)
 
@@ -32,13 +34,20 @@ npm run lint       # next lint 기반 ESLint
 
 ```text
 src/
-  components/           # shell · 여러 feature 조합하는 유일한 자리 (ProjectsPage, ProjectDetailPage, ProjectWorkspace, ProjectTopBar, UploadVideoModal, MainMediaPanel, useProjectSync)
+  components/           # shell · 여러 feature 조합하는 유일한 자리
+                        #   ProjectsPage / MediaLibraryPage / ResourcePool / ImagePool
+                        #   UploadResourceModal / StartLabelingModal / TagInput
+                        #   FrameExtractionPage / LabelSetsPage / LabelingWorkspace
+                        #   useLabelSetSync
   features/
-    media/              # 업로드·normalize·비디오 재생·프레임 추출
-    frames/             # 프레임 목록·활성 프레임·exception
+    media/              # 업로드·normalize·비디오 재생·프레임 추출(capture)·BottomTimeline
+    frames/             # 프레임 목록·활성 프레임·exception (라벨링 워크스페이스용)
     annotations/        # class·shape·tool·drawing·keyboard
-    export/             # 직렬화/다운로드
-    projects/           # 프로젝트·비디오·프레임 서버 API 래퍼 (fetch 기반, store 비의존)
+    export/             # LabelSet 직렬화 (`buildLabelSetExport`)
+    resources/          # Resource(업로드 묶음) 서버 API 래퍼 + 타입
+    images/             # Image(라벨링 단위) 서버 API 래퍼 + 타입
+    labelsets/          # LabelSet + annotations 서버 API 래퍼 + 타입
+    projects/           # Project 서버 API 래퍼 + 타입
   shared/               # 순수 유틸·범용 훅
   lib/
     store.ts            # 슬라이스 합성 루트 (useStore 공개 API)
@@ -52,18 +61,27 @@ src/
 
 ### 데이터 흐름
 
-전체 상태는 `src/lib/store.ts`의 Zustand store에서 관리합니다. 내부적으로 feature별 slice로 분리되어 있지만 공개 API(`useStore`)는 단일 지점입니다.
+서버 도메인 모델(§11):
 
 ```text
-MediaSource → Frame[] → Annotation[]
-                ↕             ↕
-          activeFrameId  selectedAnnotationId
+Project ─┬─ Resource[]   (업로드 묶음: video / image_batch)
+         ├─ Image[]      (라벨링 단위; resource 에서 파생, source = uploaded | video_frame)
+         └─ LabelSet[]   (type=polygon|bbox|classify, classes[], imageIds[], annotations[])
 ```
 
-- **MediaSource**: 업로드 원본(한 번에 1개), object URL 보유
-- **Frame**: 미디어에서 캡처된 정지 프레임(object URL)
-- **Annotation**: 특정 frame 소속, class id 참조, shape 보유
-- **Shape**: 0..1 정규화 좌표계(해상도 독립)
+`LabelSet.imageIds` 가 멤버십, `Image` 는 여러 LabelSet 에 동시에 속할 수 있습니다. 한 LabelSet 의 classes/annotations 는 자기 자신에게만 의미를 가집니다 (LS_A 의 "scratch" ≠ LS_B 의 "scratch").
+
+라벨링 워크스페이스의 클라이언트 store(`useStore`):
+
+```text
+Image[] (Frame 으로 어댑트)  → Annotation[]
+        ↕                            ↕
+  activeFrameId            selectedAnnotationId
+```
+
+- **Frame**: 워크스페이스에서 사용하는 표시 단위. 서버 `Image` 를 `imageBytesUrl()` URL + width/height + (있으면) `videoFrameMeta.timestamp` 로 어댑트한 결과.
+- **Annotation**: 특정 frame(=Image) 소속, class id 참조, kind 에 따라 shape 보유 (rect/polygon) 또는 shape 없음 (classify).
+- **Shape**: 0..1 정규화 좌표계(해상도 독립).
 
 ### 주요 store 상태
 
@@ -175,7 +193,7 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 - `isEditableElement` — 단축키 핸들러용 broad predicate. 지금 타이핑 중인지 판단(텍스트 input, textarea, select, contenteditable 모두 true).
 - `isTextInputElement` — focus 유지 가치 판단용 strict predicate. 진짜 텍스트 입력만 true(`<select>`/checkbox/radio/color/range 등은 false).
-- `useReleaseNonTextFocus(rootRef)` — shell(`Workspace`, `ProjectWorkspace`)에서 한 번 호출. root에 capture-phase로 `pointerup`/`change`/`keyup` 리스너를 달고, 인터랙션 종료 후 `requestAnimationFrame`에서 `document.activeElement`가 `isTextInputElement` 아니면 `blur()`. select 드롭다운은 정상 동작하고, 값 선택 후에만 포커스가 풀림. Tab 키 네비게이션은 트리거하지 않아 키보드 접근성 보존.
+- `useReleaseNonTextFocus(rootRef)` — shell(`LabelingWorkspace`)에서 한 번 호출. root에 capture-phase로 `pointerup`/`change`/`keyup` 리스너를 달고, 인터랙션 종료 후 `requestAnimationFrame`에서 `document.activeElement`가 `isTextInputElement` 아니면 `blur()`. select 드롭다운은 정상 동작하고, 값 선택 후에만 포커스가 풀림. Tab 키 네비게이션은 트리거하지 않아 키보드 접근성 보존.
 - Opt-out: `data-keep-focus` 속성을 가진 요소(또는 그 조상)는 자동 blur 대상에서 제외. 모달 focus trap 등 의도적으로 포커스를 잡고 싶은 위젯용.
 - 새 인터랙티브 위젯(button/select/checkbox 등)을 추가할 때 별도 blur 처리를 할 필요 없음 — shell의 훅이 일괄 처리.
 
@@ -226,20 +244,17 @@ LabelPanel의 **capture-phase** 핸들러가 버블 단계보다 먼저 처리:
 
 ## 9) 비디오 타임라인/프레임 추출 파이프라인
 
-워크스페이스 중앙 패널은 shell 인 `MainMediaPanel` 이 통합 오너 한다. 비디오 element / sprite / fps / time / busy 등 비디오 상태는 모두 여기에 있고, 하단 타임라인은 feature 컴포넌트 `BottomTimeline` 에 위임한다.
+비디오 → Image(`source = "video_frame"`) 추출은 라벨링 워크스페이스와 분리된 단독 페이지(`FrameExtractionPage`, `/projects/[id]/extract/[resourceId]`)에서 일어납니다. 비디오 element / sprite / fps / time / busy 등 비디오 상태는 이 shell 안에서 자체 관리되고, 하단 타임라인은 feature 컴포넌트 `BottomTimeline` 에 위임합니다.
 
-### 9.1 `MainMediaPanel` (`src/components/MainMediaPanel.tsx`)
+### 9.1 `FrameExtractionPage` (`src/components/FrameExtractionPage.tsx`)
 
-- 비디오 element 는 **항상 마운트** (video 모드 = 보임 / frame 모드 = `display:none`). fps 추정·sprite·seek·`captureCurrent` 가 모드 전환 시 끊기지 않게 하기 위함.
-- `centerViewMode === "video"`: 비디오 + 스텝 입력 패널.
-- `centerViewMode === "frame"`: `<AnnotationStage />` + 우하단에 "비디오 재생으로 전환" 텍스트 버튼만 (mini PIP 비디오는 없음).
-- video 모드일 때 `<Toolbar />` 는 `ProjectWorkspace`/`Workspace` 에서 숨김.
-- 키보드: video 모드는 `Space/C/←/→`, frame 모드는 `↑/↓` 만 처리.
-- `seek(t)` 는 video 모드면 그냥 `currentTime` 갱신, frame 모드에서 호출되면 `centerViewMode = "video"` 로 전환 + `pause()` + `currentTime` 설정 → BottomTimeline 트랙 클릭 한 번으로 정지된 비디오 화면으로 자연스럽게 넘어옴.
+- Resource source 비디오를 `<video>` 로 마운트하고, 추출 결과는 `addImagesToResource(projectId, resourceId, [...])` 로 즉시 서버에 등록 → 같은 페이지 안에서 썸네일 그리드로 다시 보여준다.
+- 추출된 Image 의 id 는 클라이언트가 미리 할당하므로 (UUID), Media Library 로 돌아가도 동일 id 를 본다.
+- 페이지를 떠나면 비디오/sprite 상태는 폐기됨. 라벨링 워크스페이스는 비디오를 보지 않고 Image 만 본다.
 
 ### 9.2 `BottomTimeline` (`src/features/media/ui/BottomTimeline.tsx`)
 
-video 모드와 frame 모드에 동일하게 표시되는 통합 하단 영역. 세 줄로 구성:
+추출 페이지 하단에 표시되는 통합 영역. 세 줄로 구성:
 
 1. **Sprite preview / scrubber 트랙** — `pointerdown/move/up` 으로 클릭 + 드래그 모두 seek. 별도 hover 팝업은 두지 않음. cursor 라인은 video 모드면 `video.currentTime`, frame 모드면 active frame 의 timestamp.
    - 프레임 마커 3색: 현재 선택 frame = accent / 필터 통과 = amber / 필터 제외 = zinc dim.
@@ -270,91 +285,134 @@ video 모드와 frame 모드에 동일하게 표시되는 통합 하단 영역. 
 - sprite/object URL은 cleanup에서 revoke해 메모리 누수 방지
 - 무거운 작업은 worker/헬퍼 함수로 분리해 UI 인터랙션 블로킹 방지
 - 비디오 정규화 파이프라인(`src/features/media/service/normalize.ts`): 서버 어댑터(`NEXT_PUBLIC_VIDEO_NORMALIZE_ENDPOINT`) 우선, 실패 시 ffmpeg.wasm 폴백
-- 중앙 워크스페이스 `centerViewMode`: `video`(재생/추출) / `frame`(어노테이션 스테이지). video 모드일 땐 `Toolbar` 도 숨김.
-- 비디오 타임라인 + 추출 컨트롤은 `src/features/media/ui/BottomTimeline.tsx` 단일 컴포넌트가 담당. 양 모드 모두 하단에 동일하게 노출됨.
+- 비디오 추출은 `FrameExtractionPage` 에 격리됨. 라벨링 워크스페이스 (`LabelingWorkspace`) 는 Image 만 다루며 비디오 element 를 마운트하지 않는다.
+- 비디오 타임라인 + 추출 컨트롤은 `src/features/media/ui/BottomTimeline.tsx` 단일 컴포넌트가 담당.
 
 ---
 
-## 11) 프로젝트/비디오 관리 (서버 persistence)
+## 11) Resource / Image / LabelSet 모델 (서버 persistence)
 
-라벨링 워크스페이스 위에 프로젝트·비디오 관리 레이어가 얹혀 있습니다. 비디오·프레임·어노테이션은 로컬 파일시스템(`./storage/`, gitignored)에 저장되며, 모든 API는 `src/lib/server/storage.ts`를 거치므로 향후 DB 교체 시 이 단일 파일만 바꾸면 됩니다.
+라벨링 워크스페이스 위에 Media Library 가 있고, 그 위에 프로젝트가 있습니다. 모든 데이터는 로컬 파일시스템(`./storage/`, gitignored)에 저장되며, 모든 API는 `src/lib/server/storage.ts`를 거치므로 향후 DB 교체 시 이 단일 파일만 바꾸면 됩니다.
 
-### 11.1 디스크 레이아웃 (`STORAGE_ROOT = ./storage`)
+### 11.1 도메인 엔티티
+
+- **Resource** (`features/resources/types.ts`) — 한 번의 업로드 묶음. `type = "video" | "image_batch"`, name, tags[], (video 만) sourceExt/duration/width/height/previewCount.
+- **Image** (`features/images/types.ts`) — 라벨링 단위. `source = "uploaded" | "video_frame"`, fileName/ext/width/height/tags[], video_frame 이면 `videoFrameMeta.{timestamp,frameIndex}`. 같은 Image 가 여러 LabelSet 에 멤버로 들어갈 수 있다.
+- **LabelSet** (`features/labelsets/types.ts`) — 라벨링 작업 단위. `type = "polygon" | "bbox" | "classify"` 가 생성 시 고정. classes[] 와 imageIds[] 를 보유. 어노테이션은 별도 파일.
+
+### 11.2 디스크 레이아웃 (`STORAGE_ROOT = ./storage`)
 
 ```text
 storage/
-  projects.json                              # ProjectSummary[]
+  projects.json                                 # { projects: string[] }
   {projectId}/
-    project.json                             # { id, name, createdAt, members }
-    videos.json                              # VideoSummary[]
-    {videoId}/
-      meta.json                              # VideoMeta (+ previewCount)
-      source.<ext>                           # normalize된 원본 비디오/이미지
-      data.json                              # { classes, frames[], annotations[] }
-      frames/{frameId}.jpg                   # 추출/캡처된 프레임 바이트
-      preview-{0..previewCount-1}.jpg        # 비디오 hover-reel 썸네일
+    project.json                                # { id, name, createdAt, members }
+    resources.json                              # string[] (resource ids)
+    images.json                                 # string[] (image ids)
+    labelsets.json                              # string[] (labelset ids)
+    resources/{resourceId}/
+      meta.json                                 # Resource
+      source.<ext>                              # video resource 만
+      previews/preview-{i}.jpg                  # video resource hover-reel
+    images/{imageId}/
+      meta.json                                 # Image
+      bytes.<ext>                               # 이미지 바이트
+    labelsets/{labelSetId}/
+      meta.json                                 # LabelSet (id/name/type/classes/imageIds)
+      annotations.json                          # { annotations: LabelSetAnnotation[] }
 ```
 
-### 11.2 API 라우트 (`app/api/projects/...`)
+### 11.3 API 라우트 (`app/api/projects/...`)
 
 | Method | Path | 용도 |
 |---|---|---|
 | GET/POST | `/api/projects` | 목록·생성 |
-| GET/DELETE | `/api/projects/[id]` | detail(프로젝트 + videos)·삭제 |
-| GET/POST | `/api/projects/[id]/videos` | 비디오 목록·업로드(multipart) |
-| GET/DELETE | `/api/projects/[id]/videos/[vid]` | meta 조회·삭제(프레임 포함 재귀 정리) |
-| GET | `/api/projects/[id]/videos/[vid]/source` | 원본 비디오 스트림 |
-| GET/PUT | `/api/projects/[id]/videos/[vid]/data` | `data.json` 조회·저장 (**PUT은 classes+annotations만 overlay**, frames는 별도 엔드포인트로 관리. RMW는 `mutateVideoData()`를 거쳐 동일 락 키로 직렬화됨 — §11.8 참고) |
-| POST | `/api/projects/[id]/videos/[vid]/frames` | 프레임 일괄 업로드(multipart, meta JSON + files) |
-| GET/DELETE | `/api/projects/[id]/videos/[vid]/frames/[fid]` | 프레임 이미지·삭제 |
-| POST | `/api/projects/[id]/videos/[vid]/previews` | hover-reel 썸네일 일괄 업로드 |
-| GET | `/api/projects/[id]/videos/[vid]/previews/[idx]` | 개별 preview |
-| GET | `/api/projects/[id]/export?videos=&frames=` | 선택된 videos/frames의 JSON export (frames 우선) |
+| GET/DELETE | `/api/projects/[id]` | detail·삭제 |
+| GET/POST | `/api/projects/[id]/resources` | Resource 목록·생성(multipart, video 파일 포함) |
+| GET/PATCH/DELETE | `/api/projects/[id]/resources/[rid]` | meta 조회·이름/태그 수정·삭제(자식 Image 까지 cascade) |
+| GET | `/api/projects/[id]/resources/[rid]/source` | 원본 비디오 스트림 |
+| POST/GET | `/api/projects/[id]/resources/[rid]/previews(/[idx])` | hover-reel 썸네일 |
+| POST | `/api/projects/[id]/resources/[rid]/images` | Resource 에 Image 일괄 추가 (frame 추출 결과 포함) |
+| GET | `/api/projects/[id]/images?resourceId=&source=&tag=` | Image 목록 (필터) |
+| GET/PATCH/DELETE | `/api/projects/[id]/images/[iid]` | meta 조회·태그 수정·삭제(LabelSet 멤버십 + annotations 까지 cascade) |
+| GET | `/api/projects/[id]/images/[iid]/bytes` | 원본 이미지 바이트 |
+| POST | `/api/projects/[id]/images/tags` | Image 태그 일괄 변경 (`{imageIds, tags, mode: "add"\|"remove"\|"replace"}`) |
+| GET/POST | `/api/projects/[id]/labelsets` | LabelSet 목록·생성 |
+| GET/PATCH/DELETE | `/api/projects/[id]/labelsets/[lsid]` | meta 조회·이름/classes/imageIds 수정·삭제 |
+| GET/PUT | `/api/projects/[id]/labelsets/[lsid]/annotations` | annotations.json 조회·저장 |
+| GET | `/api/projects/[id]/labelsets/[lsid]/export` | LabelSet JSON 다운로드 (`buildLabelSetExport`) |
 
-클라이언트 측 fetch 래퍼는 모두 `src/features/projects/service/api.ts`에 있습니다. `features/projects/index.ts`는 **타입만** 재export하고 서비스는 경로로 직접 import (service → store 접근 금지 규칙 준수).
+클라이언트 측 fetch 래퍼는 각 feature 의 `service/api.ts` 에 있습니다 (`@/features/{resources,images,labelsets,projects}/service/api`). 각 feature 의 `index.ts` 는 **타입만** 재export 하고 서비스는 deep import (service → store 접근 금지 규칙 준수).
 
-### 11.3 ProjectDetailPage (`src/components/ProjectDetailPage.tsx`)
+### 11.4 Media Library (`MediaLibraryPage`)
 
-- **비디오 테이블**: `table-fixed` + `<colgroup>` 고정폭(체크박스 40 / 이름 260 / 해상도 96 / duration·frames·labels 72 / actions 160, "라벨 종류"가 잔여 폭 흡수). 긴 이름은 `truncate` + `title=`.
-- **비디오 hover-reel**: 이름 좌측에 `preview-0.jpg` 인라인, hover 시 `PREVIEW_REEL_INTERVAL_MS = 220ms`로 전체 preview 순환. 모든 이미지를 미리 마운트해 깜빡임 방지.
-- **프리뷰 tooltip**: 프레임 썸네일/미리보기 버튼 hover 시 `createPortal`로 document.body에 렌더 → table row 마크업 밖으로 escape. 프레임 tooltip은 class 색상 rect + HTML 라벨 오버레이 포함.
-- **프레임 그리드 가상화**: `FRAMES_PAGE_SIZE = 50` 단위로 `IntersectionObserver` sentinel이 뷰포트 진입 시 50개씩 창 확장. 수천 개 프레임에도 초기 렌더 비용을 일정하게 유지.
-- **선택 모델**: 비디오 체크박스는 해당 비디오의 모든 프레임을 토글(+per-frame override 초기화), 프레임 체크박스는 개별 토글. 최종 선택은 둘의 합집합. Download는 `frames=`(있으면 우선) 또는 `videos=`로 export URL 생성.
-- **Class breakdown**: `VideoBundle.classCounts`로 비디오 행 "라벨 종류" 컬럼에 색상 pill + 카운트. 셀별 `max-w-full` + 내부 truncate로 긴 class 이름도 가로 overflow 없음.
+`/projects/[id]` 가 `MediaLibraryPage` 를 렌더하고, 그 안에서 `ResourcePool` + `ImagePool` 두 패널이 합성됩니다.
 
-### 11.4 업로드 플로우 (`UploadVideoModal`)
+- **ResourcePool**: 업로드 묶음 단위 관리. 검색 / type 필터(video/image_batch) / Resource 태그 필터. 비디오 resource 는 hover-reel(`previews/preview-{i}.jpg` 순환). 이름·태그 인라인 편집(`updateResource`). "Frame Extraction →" 링크로 `/projects/[id]/extract/[resourceId]` 이동.
+- **ImagePool**: 라벨링 단위 그리드. 4가지 view mode:
+  - **All** — 평면 grid
+  - **By Resource** — Resource 별 그룹 + "이 그룹 전체 선택"
+  - **By Tag** — image tag 별 그룹 (멀티 태그 이미지는 여러 그룹에 중복 노출, 무태그 이미지는 "(no tag)" 그룹 하단)
+  - **Resource × Tag matrix** — 행=tag, 열=resource, 셀=해당 (tag, resource) 의 image 수. 셀 클릭 = 셀에 속한 이미지 일괄 선택/해제
+- **선택 모델**: `ImageSelection.ids: Set<string>` 가 단일 source. "현재 페이지 전체 선택" / "현재 결과 전체 선택" / "선택 해제" / 셀·그룹 일괄 선택 모두 같은 set 을 갱신.
+- **Pagination**: `PAGE_SIZE = 100` + "더 보기" 버튼으로 점진 확장. 필터/검색/view 변경 시 자동 리셋. 썸네일은 `loading="lazy"` + `decoding="async"`.
+- **Bulk tag**: 선택이 1장 이상일 때 "태그 일괄…" 버튼 → 인라인 `BulkTagBar`. 입력한 태그를 `add`/`remove`/`replace` 모드로 일괄 적용 (`POST /images/tags`). 성공 시 `onImagesMutated()` 로 부모가 재로드.
+- **Start Labeling**: 선택 1장 이상에서 활성화. `StartLabelingModal` 로 새 LabelSet 생성 또는 기존에 추가 (existing 의 경우 imageIds union → PATCH).
 
-- `MediaDropzone`을 `onComplete` 콜백 모드로 재사용 (store에 commit하지 않고 정규화 결과만 콜백에 전달).
-- 업로드 완료 후 비디오라면 `extractFrames(evenlySpacedTimes(duration, PREVIEW_COUNT=10))`으로 10장 추출 → `uploadPreviews()`로 POST. preview 업로드 실패는 비차단(best-effort).
+### 11.5 Frame Extraction (`FrameExtractionPage`)
 
-### 11.5 useProjectSync (`src/components/useProjectSync.ts`)
+`/projects/[id]/extract/[resourceId]` — 비디오 resource → Image(`source = "video_frame"`) 추출 단독 페이지. video element + sprite + `BottomTimeline`(범위 트랙·균등캡쳐·현재 캡쳐) 을 자체 마운트. 추출된 프레임은 `addImagesToResource(projectId, resourceId, [...])` 로 서버에 즉시 등록되며, 클라이언트가 ID 를 미리 할당하므로 추출 직후 Media Library 로 돌아가도 동일한 Image id 를 본다.
 
-`ProjectWorkspace` 안에서 store ↔ 서버 동기화를 전담하는 hook. 책임은 세 가지:
+### 11.6 LabelSet 워크스페이스 하이드레이션 (`LabelingWorkspace`)
 
-1. **프레임 업로드**: `blob:` URL로 새로 추가된 frame을 `uploadFrames()`로 보내고, 성공 시 `useStore.setState`로 URL을 서버 URL(`frameImageUrl(...)`)로 교체 + 기존 blob URL revoke. 중복 업로드 방지용 `knownFrameIdsRef` / `uploadingRef` 관리.
-2. **프레임 삭제**: store에서 빠진 frame id를 감지하면 `apiDeleteFrame()` 호출.
-3. **data.json 디바운스 저장**: classes/annotations 변경 시 500ms 디바운스 후 `saveVideoData()`. 프레임 배열은 여기서 보내지 않음 — `frames: []`로 명시해 별도 엔드포인트(POST/DELETE frames)와의 경쟁을 차단.
+`/projects/[id]/labelsets/[lsid]` — 마운트 시:
 
-**비디오 전환 안전장치**: `ProjectWorkspace`는 비디오 간 이동 시 같은 컴포넌트 인스턴스를 재사용하므로, `[projectId, videoId]` 의존성 effect가 매번 `knownFrameIdsRef`/`uploadingRef`/`saveTimerRef`를 초기화한다. 동시에 `generationRef`를 1 증가시켜, 이전 비디오 컨텍스트에서 시작된 in-flight 업로드/디바운스 저장이 await 후 완료될 때 `generationRef.current !== gen`으로 자기 자신을 감지하고 새 비디오의 store/refs를 건드리지 않게 막는다 (서버 쪽 쓰기는 그대로 진행 — 작업 손실 없음).
+1. `reset()` 으로 store 초기화
+2. `getLabelSet()` + `getLabelSetAnnotations()` + `listImages()` 병렬 fetch
+3. LabelSet 의 `imageIds` 순서로 멤버 이미지를 정렬 → `Image` 를 `Frame` 으로 어댑트(`imageBytesUrl(...)` URL, width/height, optional timestamp)
+4. annotations 는 `annotationFromApi()` 로 store 의 `Annotation` 형태(`frameId` 가 곧 imageId)로 변환
+5. `useStore.setState({ frames, classes, annotations, activeToolId, labelSetType, ... })` — `activeToolId` 는 LabelSet type 에 따라 `rect` / `polygon` / `classify`. 워크스페이스에서는 `frameRange` / `unlabeledOnly` / `exceptedFrameIds` 를 끔(영상 시간 개념이 무의미).
 
-### 11.6 ProjectWorkspace 하이드레이션
+**LabelSet 전환 안전장치**: `useLabelSetSync` 가 `[projectId, labelSetId]` 의존성마다 `generationRef` 를 +1 하고, 디바운스 setTimeout 콜백이 자기 generation 이 아니면 즉시 bail. 이전 LabelSet 컨텍스트의 in-flight 저장이 새 LabelSet 데이터를 덮어쓰지 못하게 막는다 (이전 컨텍스트의 정상적인 마지막 저장은 그대로 디스크에 반영됨 — 작업 손실 없음).
 
-`ProjectWorkspace`는 마운트 시 `reset()` → `getVideoData()` → 비디오 파일을 blob으로 fetch해 `File` 생성 → `MediaSource` 조립 → `useStore.setState({ media, frames, annotations, classes, activeFrameId, activeClassId, centerViewMode })`. 서버에 classes가 없으면 기본 class 하나로 seed. 프레임 URL은 서버 URL이므로 cleanup의 revoke는 no-op, video blob URL만 실제로 revoke됨.
+### 11.7 useLabelSetSync (`src/components/useLabelSetSync.ts`)
 
-### 11.7 설정
+라벨링 워크스페이스 안에서 store ↔ 서버 업로드를 전담하는 hook (다운로드는 위 §11.6 의 hydration 가 담당):
+
+1. **annotations 디바운스 저장** — `annotations` 변경 시 500ms 디바운스 후 `saveLabelSetAnnotations()` (annotations.json 전체 PUT).
+2. **classes 디바운스 저장** — `classes` 변경 시 500ms 디바운스 후 `updateLabelSet({classes})` (LabelSet meta PATCH).
+3. annotation 의 `frameId` ↔ API 의 `imageId` 변환은 `annotationFromApi`/`annotationToApi` 가 처리. classify 타입은 shape 없이 `{kind:"classify", classId, imageId}` 만 직렬화.
+
+### 11.8 업로드 플로우 (`UploadResourceModal`)
+
+`MediaDropzone` 을 `onComplete` 콜백 모드로 재사용. 비디오는 `createResource({type:"video", file, width, height, duration})` 로 등록 후, `extractFrames(evenlySpacedTimes(duration, PREVIEW_COUNT=10))` → `uploadResourcePreviews()` 로 hover-reel 썸네일 best-effort 업로드. image_batch 는 `createResource({type:"image_batch"})` → `addImagesToResource()` 로 파일 묶음 등록.
+
+### 11.9 Export (`features/export`)
+
+`buildLabelSetExport({labelSet, images, resources, annotations})` 가 LabelSet 단위 export JSON(`version: 2`) 을 생성한다. 포함되는 것:
+
+- LabelSet meta (id/name/type/classes/createdAt)
+- 멤버 Image 의 메타 (id/fileName/width/height/source/tags/videoFrameMeta + 소속 Resource 요약)
+- 모든 annotations (kind 별 shape 포함)
+
+이미지 바이트는 인라인하지 않고 `/api/projects/{id}/images/{imageId}/bytes` 로 계속 addressable. 다운로드는 `GET /api/projects/[id]/labelsets/[lsid]/export` 가 `Content-Disposition: attachment` 헤더로 반환하며, LabelSet 목록 페이지·라벨링 워크스페이스 헤더 양쪽에 "Export JSON" 링크가 있다.
+
+### 11.10 설정
 
 - `storage/`는 `.gitignore` 대상.
 - `next.config.mjs`에서 `experimental.serverActions.bodySizeLimit = "2gb"`로 대용량 비디오 업로드 허용.
 
-### 11.8 동시성 모델 (storage.ts)
+### 11.11 동시성 모델 (storage.ts)
 
-여러 요청이 같은 인덱스 JSON에 동시에 read-modify-write를 하면 baseline 충돌로 항목이 silently 누락되던 버그가 있어, 모든 RMW 경로가 두 가지 가드를 거친다:
+여러 요청이 같은 인덱스 JSON 에 동시에 read-modify-write 를 하면 baseline 충돌로 항목이 silently 누락되던 버그를 막기 위해, 모든 RMW 경로가 두 가지 가드를 거친다:
 
-1. **per-path in-process mutex (`withFileLock`)**: `Map<filePath, Promise>` 기반 직렬화 큐. 같은 파일 경로에 대한 mutator가 절대 겹치지 않게 한다. 락 entry는 tail이 settle되면 자동 정리되고, 한 mutator의 throw가 큐를 막지 않는다 (다음 작업은 `prev.catch(() => undefined).then(...)`로 잇는다). 적용 대상:
-   - `data.json` (`mutateVideoData`) — frames POST/DELETE, data PUT이 모두 같은 키
-   - `videos.json` — `createVideo`/`deleteVideo`
+1. **per-path in-process mutex (`withFileLock`)**: `Map<filePath, Promise>` 기반 직렬화 큐. 같은 파일 경로에 대한 mutator 가 절대 겹치지 않게 한다. 락 entry 는 tail 이 settle 되면 자동 정리되고, 한 mutator 의 throw 가 큐를 막지 않는다. 적용 대상:
    - `projects.json` — `createProject`/`deleteProject`
-   - `meta.json` — `writePreviews`
-2. **atomic write**: `writeJson()`은 `.tmp` 파일에 쓰고 `rename(tmp, target)`으로 교체. reader는 항상 이전 또는 새 내용만 보고 partial JSON은 절대 노출되지 않는다. mid-write 크래시도 `target` 자체는 손상되지 않음.
+   - `resources.json` / `images.json` / `labelsets.json` — `appendToIndex`/`removeFromIndex`
+   - 각 entity 의 `meta.json` — `updateResource`/`updateImage`/`updateLabelSet`/`bulkTagImages`/`writePreviews`
+   - `annotations.json` — `mutateLabelSetAnnotations`
+2. **atomic write**: `writeJson()`은 `.tmp` 파일에 쓰고 `rename(tmp, target)`으로 교체. reader 는 항상 이전 또는 새 내용만 보고 partial JSON 은 절대 노출되지 않는다. mid-write 크래시도 `target` 자체는 손상되지 않음.
 
-`mutateVideoData(projectId, videoId, mutator)`가 권장 진입점. mutator는 `data`를 in-place 수정하고 값을 리턴하며, 리턴값이 정확히 `false`면 write를 스킵한다 (예: 삭제할 프레임이 이미 없는 경우 → no-op). 향후 DB로 옮기면 storage.ts 한 파일만 교체하면 되고 락도 함께 사라진다.
+권장 진입점: `mutateLabelSet(projectId, lsid, mutator)`, `mutateLabelSetAnnotations(projectId, lsid, mutator)`. mutator 가 정확히 `false` 를 리턴하면 write 를 스킵한다 (no-op 케이스). `bulkTagImages` 는 imageIds 별로 각 meta.json 락을 순차로 잡으므로 같은 이미지에 대한 single-image PATCH 와 안전하게 겹친다.
+
+향후 DB 로 옮기면 `storage.ts` 한 파일만 교체하면 되고 락도 함께 사라진다.

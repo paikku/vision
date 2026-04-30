@@ -64,6 +64,20 @@ export async function deleteImage(
   });
 }
 
+export async function bulkTagImages(
+  projectId: string,
+  imageIds: string[],
+  tags: string[],
+  mode: "replace" | "add" | "remove",
+): Promise<{ updated: number }> {
+  const r = await fetch(`/api/projects/${projectId}/images/tags`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ imageIds, tags, mode }),
+  });
+  return asJson<{ updated: number }>(r);
+}
+
 export function imageBytesUrl(projectId: string, imageId: string): string {
   return `/api/projects/${projectId}/images/${imageId}/bytes`;
 }

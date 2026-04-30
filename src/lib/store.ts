@@ -5,7 +5,6 @@ import {
   type AnnotationsSlice,
   createAnnotationsSlice,
 } from "@/features/annotations/slice";
-import { exportJson as exportJsonImpl } from "@/features/export/service/exportJson";
 import {
   type FramesSlice,
   createFramesSlice,
@@ -32,7 +31,6 @@ export type StoreState = MediaSlice &
     setActiveFrame: (id: string | null) => void;
     removeFrame: (id: string) => void;
     reset: () => void;
-    exportJson: () => string;
   };
 
 /** Tolerance in seconds when checking whether a captured frame's timestamp
@@ -126,11 +124,6 @@ export const useStore = create<StoreState>()((set, get, store) => ({
       rangeFilterEnabled: true,
       frameRange: null,
     });
-  },
-
-  exportJson: () => {
-    const { media, frames, classes, annotations } = get();
-    return exportJsonImpl({ media, frames, classes, annotations });
   },
 }));
 

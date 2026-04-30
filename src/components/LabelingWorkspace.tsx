@@ -17,6 +17,7 @@ import type { Image } from "@/features/images/types";
 import {
   getLabelSet,
   getLabelSetAnnotations,
+  labelSetExportUrl,
 } from "@/features/labelsets/service/api";
 import type { LabelSet } from "@/features/labelsets/types";
 import { useStore } from "@/lib/store";
@@ -167,12 +168,23 @@ export function LabelingWorkspace({
             {labelSet.type}
           </span>
         )}
-        <Link
-          href={`/projects/${projectId}`}
-          className="ml-auto text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-        >
-          Media Library
-        </Link>
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          {labelSet && (
+            <a
+              href={labelSetExportUrl(projectId, labelSet.id)}
+              download={`${labelSet.name}.json`}
+              className="rounded-md border border-[var(--color-line)] px-2.5 py-1 text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              Export JSON
+            </a>
+          )}
+          <Link
+            href={`/projects/${projectId}`}
+            className="text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+          >
+            Media Library
+          </Link>
+        </div>
       </header>
 
       {error && (

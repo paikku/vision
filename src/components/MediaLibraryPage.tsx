@@ -124,6 +124,7 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
           selection={imageSelection}
           onSelectionChange={setImageSelection}
           onStartLabeling={() => setLabelingOpen(true)}
+          onImagesMutated={() => void reloadResources()}
         />
       </main>
 

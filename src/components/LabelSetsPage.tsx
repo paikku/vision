@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   deleteLabelSet,
+  labelSetExportUrl,
   listLabelSets,
 } from "@/features/labelsets/service/api";
 import type { LabelSetSummary } from "@/features/labelsets/types";
@@ -92,6 +93,13 @@ export function LabelSetsPage({ projectId }: { projectId: string }) {
                     {new Date(ls.createdAt).toLocaleString()}
                   </div>
                 </Link>
+                <a
+                  href={labelSetExportUrl(projectId, ls.id)}
+                  download={`${ls.name}.json`}
+                  className="invisible rounded-md border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] group-hover:visible"
+                >
+                  Export JSON
+                </a>
                 <button
                   type="button"
                   onClick={() => void onDelete(ls)}

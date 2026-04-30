@@ -92,3 +92,10 @@ export async function saveLabelSetAnnotations(
     body: JSON.stringify(data),
   });
 }
+
+export function labelSetExportUrl(
+  projectId: string,
+  labelSetId: string,
+): string {
+  return `/api/projects/${projectId}/labelsets/${labelSetId}/export`;
+}

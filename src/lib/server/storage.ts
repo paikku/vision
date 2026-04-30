@@ -569,6 +569,45 @@ export async function updateImage(
   });
 }
 
+/**
+ * Bulk tag mutation across many images. `mode`:
+ *   - `replace` — overwrite tag list with `tags`.
+ *   - `add`     — union of current tags and `tags`.
+ *   - `remove`  — current tags minus `tags`.
+ *
+ * Per-image meta files are guarded by the same lock used by single-image
+ * updateImage(), so concurrent bulk + single edits cannot clobber each other.
+ */
+export async function bulkTagImages(
+  projectId: string,
+  imageIds: string[],
+  tags: string[],
+  mode: "replace" | "add" | "remove",
+): Promise<{ updated: number }> {
+  let updated = 0;
+  for (const id of imageIds) {
+    const file = path.join(imageDir(projectId, id), "meta.json");
+    const ok = await withFileLock(file, async () => {
+      const current = await getImage(projectId, id);
+      if (!current) return false;
+      let next: string[];
+      if (mode === "replace") {
+        next = Array.from(new Set(tags));
+      } else if (mode === "add") {
+        next = Array.from(new Set([...current.tags, ...tags]));
+      } else {
+        const drop = new Set(tags);
+        next = current.tags.filter((t) => !drop.has(t));
+      }
+      const updatedImage: Image = { ...current, tags: next };
+      await writeJson(file, updatedImage);
+      return true;
+    });
+    if (ok) updated += 1;
+  }
+  return { updated };
+}
+
 export async function deleteImage(
   projectId: string,
   imageId: string,
