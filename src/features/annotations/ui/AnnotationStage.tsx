@@ -17,7 +17,9 @@ import {
   translateShape,
 } from "../shape-utils";
 import { TOOLS } from "../tools/registry";
-import type { LabelClass, Shape } from "../types";
+import type { Annotation, LabelClass, Shape } from "../types";
+
+type ShapeAnnotation = Annotation & { shape: Shape };
 
 type FitRect = { left: number; top: number; width: number; height: number };
 
@@ -40,6 +42,7 @@ export function AnnotationStage() {
   const keepZoomOnFrameChange = useStore((s) => s.keepZoomOnFrameChange);
   const setKeepZoomOnFrameChange = useStore((s) => s.setKeepZoomOnFrameChange);
   const segmentingIds = useStore((s) => s.segmentingIds);
+  const labelSetType = useStore((s) => s.labelSetType);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -91,8 +94,8 @@ export function AnnotationStage() {
     activeToolId,
     interactionMode,
     onBeginDraw: () => selectAnnotation(null),
-    onCommit: (frameId, classId, shape) =>
-      addAnnotation({ frameId, classId, shape }),
+    onCommit: (frameId, classId, kind, shape) =>
+      addAnnotation({ frameId, classId, kind, shape }),
   });
 
   const dragRef = useRef<
@@ -142,7 +145,15 @@ export function AnnotationStage() {
     );
   }
 
-  const frameAnnotations = annotations.filter((a) => a.frameId === frame.id);
+  // Stage only renders shape-bearing annotations. Classify entries (which
+  // have no shape) live alongside in the same store but are surfaced via the
+  // LabelPanel and a corner badge in the workspace shell.
+  const frameAnnotations = annotations.filter(
+    (a): a is ShapeAnnotation =>
+      a.frameId === frame.id &&
+      (a.kind === "rect" || a.kind === "polygon") &&
+      a.shape !== undefined,
+  );
   const { zoom, px, py } = transform;
   const tool = TOOLS[activeToolId];
   const isEditMode = interactionMode === "edit";
@@ -234,6 +245,16 @@ export function AnnotationStage() {
     }
   };
 
+  const onClassifyStageClick = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !activeClassId) return;
+    e.preventDefault();
+    addAnnotation({
+      frameId: frame.id,
+      classId: activeClassId,
+      kind: "classify",
+    });
+  };
+
   const onEditStagePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (dragRef.current) {
       try {
@@ -264,27 +285,44 @@ export function AnnotationStage() {
             top: fitState.top,
             width: fitState.width,
             height: fitState.height,
-            cursor: interactionMode === "draw" ? cursor : isPanning ? "grabbing" : "grab",
+            cursor:
+              labelSetType === "classify"
+                ? "pointer"
+                : interactionMode === "draw"
+                  ? cursor
+                  : isPanning
+                    ? "grabbing"
+                    : "grab",
             transformOrigin: "0 0",
             transform: `translate(${px}px, ${py}px) scale(${zoom})`,
           }}
           onPointerDown={
-            interactionMode === "draw"
-              ? handlers.onPointerDown
-              : onEditStagePointerDown
+            labelSetType === "classify"
+              ? onClassifyStageClick
+              : interactionMode === "draw"
+                ? handlers.onPointerDown
+                : onEditStagePointerDown
           }
           onPointerMove={
-            interactionMode === "draw"
-              ? handlers.onPointerMove
-              : onEditStagePointerMove
+            labelSetType === "classify"
+              ? undefined
+              : interactionMode === "draw"
+                ? handlers.onPointerMove
+                : onEditStagePointerMove
           }
           onPointerUp={
-            interactionMode === "draw" ? handlers.onPointerUp : onEditStagePointerUp
+            labelSetType === "classify"
+              ? undefined
+              : interactionMode === "draw"
+                ? handlers.onPointerUp
+                : onEditStagePointerUp
           }
           onPointerCancel={
-            interactionMode === "draw"
-              ? handlers.onPointerCancel
-              : onEditStagePointerUp
+            labelSetType === "classify"
+              ? undefined
+              : interactionMode === "draw"
+                ? handlers.onPointerCancel
+                : onEditStagePointerUp
           }
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -513,6 +551,34 @@ export function AnnotationStage() {
             style={{ left: cursorPos.x + 14, top: cursorPos.y + 14, background: cls.color }}
           >
             {cls.name}
+          </div>
+        );
+      })()}
+
+      {/* Classify badge — shows the current image's classify label, if any. */}
+      {labelSetType === "classify" && (() => {
+        const current = annotations.find(
+          (a) => a.frameId === frame.id && a.kind === "classify",
+        );
+        const cls = current
+          ? classes.find((c) => c.id === current.classId) ?? null
+          : null;
+        return (
+          <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-md bg-black/60 px-2.5 py-1 text-xs text-white backdrop-blur">
+            <span className="text-[10px] uppercase tracking-wide text-white/60">
+              classify
+            </span>
+            {cls ? (
+              <>
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ background: cls.color }}
+                />
+                <span className="font-medium">{cls.name}</span>
+              </>
+            ) : (
+              <span className="italic text-white/60">미분류</span>
+            )}
           </div>
         );
       })()}

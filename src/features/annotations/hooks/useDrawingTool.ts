@@ -21,7 +21,12 @@ type DrawingToolOptions = {
   activeToolId: ToolId;
   interactionMode: "draw" | "edit";
   onBeginDraw: () => void;
-  onCommit: (frameId: string, classId: string, shape: Shape) => void;
+  onCommit: (
+    frameId: string,
+    classId: string,
+    kind: "rect" | "polygon",
+    shape: Shape,
+  ) => void;
 };
 
 /**
@@ -83,7 +88,9 @@ export function useDrawingTool({
         e.preventDefault();
         const { frame: f, activeClassId: cid, onCommit: commit } = optsRef.current;
         cancelDraft();
-        if (f && cid) commit(f.id, cid, shape);
+        if (f && cid && (shape.kind === "rect" || shape.kind === "polygon")) {
+          commit(f.id, cid, shape.kind, shape);
+        }
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
@@ -125,7 +132,9 @@ export function useDrawingTool({
         draftRef.current = null;
         setDraftShape(null);
         phaseRef.current = "idle";
-        if (shape) commit(f.id, cid, shape);
+        if (shape && (shape.kind === "rect" || shape.kind === "polygon")) {
+          commit(f.id, cid, shape.kind, shape);
+        }
       } else {
         setDraftShape(shape ?? draftRef.current.update(p));
       }

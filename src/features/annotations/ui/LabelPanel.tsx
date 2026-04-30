@@ -110,7 +110,7 @@ export function LabelPanel() {
     async (annotationId: string) => {
       const state = useStore.getState();
       const ann = state.annotations.find((a) => a.id === annotationId);
-      if (!ann) return;
+      if (!ann || !ann.shape) return;
       const frame = state.frames.find((f) => f.id === ann.frameId);
       if (!frame) return;
       const klass = state.classes.find((c) => c.id === ann.classId);
@@ -488,9 +488,16 @@ function BulkApplyTrigger({
       exceptedFrameIds={exceptedFrameIds}
       classes={classes}
       onApply={(frameIds) => {
+        // Bulk apply only makes sense for shape-bearing annotations.
+        if (!ann.shape || (ann.kind !== "rect" && ann.kind !== "polygon")) return;
         for (const frameId of frameIds) {
           if (frameId !== ann.frameId) {
-            addAnnotation({ frameId, classId: ann.classId, shape: ann.shape });
+            addAnnotation({
+              frameId,
+              classId: ann.classId,
+              kind: ann.kind,
+              shape: ann.shape,
+            });
           }
         }
       }}

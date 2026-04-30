@@ -9,10 +9,14 @@ import type { ToolId } from "../types";
 export function Toolbar() {
   const activeToolId = useStore((s) => s.activeToolId);
   const setActiveTool = useStore((s) => s.setActiveTool);
+  const labelSetType = useStore((s) => s.labelSetType);
+
+  // The Toolbar is shape-tool only — for classify there is nothing to pick.
+  if (labelSetType === "classify") return null;
 
   return (
     <div className="flex flex-col items-center gap-1 border-r border-[var(--color-line)] bg-[var(--color-surface)] px-1.5 py-3">
-      {TOOL_LIST.map((tool) => {
+      {TOOL_LIST.filter((t) => t.id !== "classify").map((tool) => {
         const active = tool.id === activeToolId;
         return (
           <button
