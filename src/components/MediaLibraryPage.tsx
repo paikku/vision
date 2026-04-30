@@ -129,7 +129,14 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
         <div className="ml-auto" />
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 pt-4 pb-4">
+      {/*
+        Two-column layout: thin left sidebar holds ResourcePool (the
+        "where does this come from" filter source + Frame Extraction
+        entry point), the right column is dominated by ImagePool where
+        the actual selection / labeling decisions happen. The aside is
+        sticky so it stays visible while the user scrolls a long pool.
+      */}
+      <main className="flex w-full flex-1 flex-col gap-4 px-4 pt-4 pb-4">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-sm font-semibold">Media Library</h1>
           <div className="ml-auto flex items-center gap-2">
@@ -146,26 +153,32 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
 
         {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
 
-        <ResourcePool
-          projectId={projectId}
-          resources={resources}
-          reload={reloadResources}
-          selection={resourceSelection}
-          onSelect={setResourceSelection}
-        />
+        <div className="flex flex-1 flex-col gap-4 lg:flex-row">
+          <aside className="flex flex-col lg:sticky lg:top-14 lg:w-72 lg:shrink-0 lg:self-start lg:max-h-[calc(100vh-7rem)]">
+            <ResourcePool
+              projectId={projectId}
+              resources={resources}
+              reload={reloadResources}
+              selection={resourceSelection}
+              onSelect={setResourceSelection}
+            />
+          </aside>
 
-        <ImagePool
-          projectId={projectId}
-          images={images}
-          resources={resources}
-          selectedResourceIds={resourceSelection.resourceIds}
-          onResourceSelectionChange={(next) =>
-            setResourceSelection({ resourceIds: next })
-          }
-          selection={imageSelection}
-          onSelectionChange={setImageSelection}
-          onContextChange={setPoolContext}
-        />
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
+            <ImagePool
+              projectId={projectId}
+              images={images}
+              resources={resources}
+              selectedResourceIds={resourceSelection.resourceIds}
+              onResourceSelectionChange={(next) =>
+                setResourceSelection({ resourceIds: next })
+              }
+              selection={imageSelection}
+              onSelectionChange={setImageSelection}
+              onContextChange={setPoolContext}
+            />
+          </div>
+        </div>
       </main>
 
       {/*
@@ -184,7 +197,7 @@ export function MediaLibraryPage({ projectId }: { projectId: string }) {
             onMutated={() => void reloadResources()}
           />
         )}
-        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2 px-4 py-2 text-[11px]">
+        <div className="flex w-full flex-wrap items-center gap-2 px-4 py-2 text-[11px]">
           <span
             className={
               hasSelection

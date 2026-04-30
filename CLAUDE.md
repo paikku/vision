@@ -388,9 +388,9 @@ storage/
 
 ### 11.4 Media Library (`MediaLibraryPage`)
 
-`/projects/[id]` 가 `MediaLibraryPage` 를 렌더하고, 그 안에서 `ResourcePool` + `ImagePool` 두 패널이 합성됩니다.
+`/projects/[id]` 가 `MediaLibraryPage` 를 렌더한다. **2-컬럼 레이아웃** — 좌측에 `w-72` ResourcePool 사이드바(`lg:sticky lg:top-14 lg:max-h-[calc(100vh-7rem)]`), 우측 `flex-1` 영역에 ImagePool. 인터랙션 무게중심이 ImagePool 에 있다는 사실에 맞춘 비대칭 — Resource 는 "어디서 온 자료인가" 필터 source 로 좁게, 라벨링 후보는 넓게. < lg 폭에서는 사이드바가 풀려서 ImagePool 위로 stack 된다 (`flex-col lg:flex-row`). 사이드바가 sticky 라 ImagePool 이 길어져도 자료 전환은 항상 viewport 좌측에서 가능하다.
 
-- **ResourcePool**: 업로드 묶음 단위 관리. 검색 / type 필터(video/image_batch). 비디오 resource 는 hover-reel(`previews/preview-{i}.jpg` 순환) + hover 시 ▶ Extract 오버레이가 떠서 썸네일 자체가 Frame Extraction 진입점이 된다. 메타 행에 `duration · WxH` 표기. **선택 모델은 `Set<string>`** (`ResourceSelection.resourceIds`) — 행 어디든 클릭 = 토글, Shift+클릭 = `filtered` 순서 기준 마지막 클릭 ↔ 현재 사이 추가, 드래그 marquee = 박스 안 batch toggle (ImagePool 의 §12.2 패턴 그대로 — `setPointerCapture` 안 쓰고 document 리스너 + click guard). 행 우측에 고정 액션 컬럼: video 면 `[Frame Extraction →]` accent-soft 버튼, 그 다음 `⋯` 더보기 메뉴(이름 변경 / 삭제). 선택 1+ 시 헤더에 `{N}개 선택됨 · 해제 · 일괄 삭제` 강조 영역 노출. 행 안의 인터랙티브 자식(이름 입력, ⋯ 메뉴, Frame Extraction 링크, 썸네일 링크)은 `data-row-action` 속성을 달아 marquee 시작/click 토글에서 제외된다 — 새 액션 위젯을 추가할 때 같은 속성을 달 것. **Resource 자체에는 사용자 노출 태그 UI 가 없다** — 분류 의도는 Image 태그로 통일. 데이터 모델의 `Resource.tags` 필드는 잔존하지만 (호환성) 어떤 UI 도 표시·편집하지 않는다.
+- **ResourcePool (사이드바)**: 업로드 묶음 단위 관리. 좁은 폭에 맞춰 컴팩트 행 — `[checkbox] [12px hover-reel | type badge] [name + N images · 0:42 · 640×480] [⋯]`. 비디오 resource 는 hover-reel(`previews/preview-{i}.jpg` 순환) + hover 시 ▶ Extract 오버레이가 떠서 **썸네일 자체가 Frame Extraction 진입점이 된다** (별도 `Frame Extraction →` 버튼은 없음). 헤더는 `Resource Pool`/총개수 + 선택 1+ 시 `{N}개 선택됨 · 해제 · 일괄 삭제` 강조 영역. 검색·타입 필터는 두 줄(검색 input full-width / 타입 칩 [All / Video / Image]). 리스트는 `flex-1 overflow-y-auto` — 사이드바 내부에서만 스크롤하고 외부 페이지 스크롤은 ImagePool 길이에 의해 결정. **선택 모델은 `Set<string>`** (`ResourceSelection.resourceIds`) — 행 어디든 클릭 = 토글, Shift+클릭 = `filtered` 순서 기준 마지막 클릭 ↔ 현재 사이 추가, 드래그 marquee = 박스 안 batch toggle (§12.2 패턴 — `setPointerCapture` 안 쓰고 document 리스너 + click guard). ⋯ 메뉴(이름 변경 / 삭제). 행 안의 인터랙티브 자식(이름 입력, ⋯ 메뉴, 썸네일 링크)은 `data-row-action` 속성을 달아 marquee 시작/click 토글에서 제외 — 새 액션 위젯을 추가할 때 같은 속성을 달 것. **Resource 자체에는 사용자 노출 태그 UI 가 없다** — 분류 의도는 Image 태그로 통일.
 - **ImagePool**: 라벨링 단위 그리드. 4가지 view mode:
   - **All** — 평면 grid
   - **By Resource** — Resource 별 그룹 + "이 그룹 전체 선택"
@@ -401,7 +401,7 @@ storage/
   - **클릭** = 단일 토글 (선택된 카드를 다시 클릭하면 해제)
   - **드래그(marquee)** = 박스 안의 카드들을 batch-toggle. 박스 안에 미선택이 하나라도 있으면 박스 전체를 추가 선택, 박스 전체가 이미 선택돼 있으면 박스 전체를 해제. 임계값 `MARQUEE_THRESHOLD = 4px` 미만의 움직임은 클릭으로 처리되어 카드 onClick 이 정상 발화. 임계값을 넘긴 드래그는 pointerup 직후의 click 을 `onClickCapture` 에서 swallow 해서 카드 토글이 두 번 일어나지 않게 한다 (`clickGuardRef`).
   - 카드는 `data-image-id` 를 달고 있어 marquee hit-test 가 `querySelectorAll("[data-image-id]")` + `getBoundingClientRect()` 로 일관되게 동작.
-- **3행 스크롤 캡**: 모든 view mode 에서 `ImageGrid`(또는 `MatrixView`)의 스크롤 컨테이너에 `max-h-[336px]` 를 걸어 ~3행 이상이면 내부 세로 스크롤. By Resource / By Tag 그룹은 그룹별로 각자 캡이 걸리므로 그룹간 비교 시 페이지가 끝없이 길어지지 않는다.
+- **viewport-aware 스크롤 캡**: 모든 view mode 에서 `ImageGrid`(또는 `MatrixView`)의 스크롤 컨테이너에 `max-h-[60vh]` 를 걸어 우측 main 영역이 viewport 높이 비례로 채워진다. By Resource / By Tag 그룹은 그룹별로 각자 캡이 걸리므로 그룹간 비교 시 페이지가 끝없이 길어지지 않는다 (이전 `max-h-[336px]` 에서 2-컬럼 레이아웃에 맞춰 확장).
 - **그룹 들여쓰기**: `By Resource` / `By Tag` 그룹은 헤더 다음 그리드 본문에 `ml-2 pl-3 border-l border-[var(--color-line)]` 좌측 가이드라인을 그려 시각적 위계 강조. 헤더 자체는 들여쓰기 안 됨.
 - **Pagination**: `PAGE_SIZE = 100` + "더 보기" 버튼으로 점진 확장. 필터/검색/view 변경 시 자동 리셋. 썸네일은 `loading="lazy"` + `decoding="async"`.
 - **Resource 다중 선택 → 이미지 필터 union**: `ImagePool` 은 `selectedResourceIds: Set<string>` 를 받아 size === 0 이면 필터 비활성, 1+ 이면 `img.resourceId ∈ selectedResourceIds` 로 좁힌다. 헤더 텍스트는 1개일 때 resource name, 2개 이상이면 `· resource: N개`.

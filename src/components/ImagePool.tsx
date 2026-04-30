@@ -7,10 +7,11 @@ import type { ResourceSummary } from "@/features/resources/types";
 
 const PAGE_SIZE = 100;
 const NO_TAG_KEY = "__no_tag__";
-// Cap each grid scroller at ~3 rows of 96px thumbnails (gap-2 = 8px). The
-// pool view stays compact regardless of view mode; if more rows are needed
-// the user scrolls inside the grid.
-const GRID_MAX_HEIGHT = "max-h-[336px]";
+// Cap each grid scroller relative to the viewport so the right-hand pool
+// fills available height in the two-column layout but never pushes the
+// sticky footer off-screen. By Resource / By Tag use the same cap per
+// group, which still bounds total page height.
+const GRID_MAX_HEIGHT = "max-h-[60vh]";
 // Minimum drag distance before pointerdown→up is treated as a marquee
 // instead of a click. Below this we let the card's onClick fire.
 const MARQUEE_THRESHOLD = 4;

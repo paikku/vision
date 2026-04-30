@@ -276,23 +276,23 @@ export function ResourcePool({
   const selectedCount = selection.resourceIds.size;
 
   return (
-    <section className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
-      <header className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] px-3 py-2">
-        <div>
+    <section className="flex h-full min-h-0 flex-col rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
+      <header className="border-b border-[var(--color-line)] px-3 py-2">
+        <div className="flex items-baseline justify-between gap-2">
           <h2 className="text-xs font-semibold tracking-tight">Resource Pool</h2>
-          <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">
-            업로드 묶음 단위로 자료를 관리합니다.
-          </p>
+          <span className="text-[10px] text-[var(--color-muted)]">
+            {resources.length}개
+          </span>
         </div>
         {selectedCount > 0 && (
-          <div className="ml-auto flex items-center gap-2 rounded-md bg-[var(--color-accent-soft)] px-2 py-1 text-[11px]">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md bg-[var(--color-accent-soft)] px-2 py-1 text-[11px]">
             <span className="font-medium text-[var(--color-accent)]">
               {selectedCount}개 선택됨
             </span>
             <button
               type="button"
               onClick={() => setSelectionIds(new Set())}
-              className="rounded border border-[var(--color-line)] bg-[var(--color-surface)] px-1.5 py-0 hover:border-[var(--color-line)]"
+              className="ml-auto rounded border border-[var(--color-line)] bg-[var(--color-surface)] px-1.5 py-0 hover:border-[var(--color-line)]"
             >
               해제
             </button>
@@ -307,36 +307,38 @@ export function ResourcePool({
         )}
       </header>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] px-3 py-2 text-xs">
+      <div className="flex flex-col gap-1.5 border-b border-[var(--color-line)] px-3 py-2 text-xs">
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="이름 검색"
-          className="min-w-[160px] flex-1 rounded-md bg-[var(--color-surface-2)] px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+          className="w-full rounded-md bg-[var(--color-surface-2)] px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
         />
-        <FilterChip
-          active={typeFilter === "all"}
-          onClick={() => setTypeFilter("all")}
-        >
-          All
-        </FilterChip>
-        <FilterChip
-          active={typeFilter === "video"}
-          onClick={() => setTypeFilter("video")}
-        >
-          Video
-        </FilterChip>
-        <FilterChip
-          active={typeFilter === "image_batch"}
-          onClick={() => setTypeFilter("image_batch")}
-        >
-          Image Batch
-        </FilterChip>
+        <div className="flex flex-wrap items-center gap-1">
+          <FilterChip
+            active={typeFilter === "all"}
+            onClick={() => setTypeFilter("all")}
+          >
+            All
+          </FilterChip>
+          <FilterChip
+            active={typeFilter === "video"}
+            onClick={() => setTypeFilter("video")}
+          >
+            Video
+          </FilterChip>
+          <FilterChip
+            active={typeFilter === "image_batch"}
+            onClick={() => setTypeFilter("image_batch")}
+          >
+            Image
+          </FilterChip>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="px-3 py-6 text-center text-xs text-[var(--color-muted)]">
+        <div className="flex-1 px-3 py-6 text-center text-xs text-[var(--color-muted)]">
           {resources.length === 0
             ? "Resource 가 없습니다. 상단에서 업로드하세요."
             : "조건에 맞는 Resource 가 없습니다."}
@@ -346,7 +348,7 @@ export function ResourcePool({
           ref={containerRef}
           onPointerDown={onPointerDown}
           onClickCapture={onClickCapture}
-          className="relative divide-y divide-[var(--color-line)] select-none"
+          className="relative flex-1 divide-y divide-[var(--color-line)] overflow-y-auto select-none"
         >
           {filtered.map((r) => {
             const selected = selection.resourceIds.has(r.id);
@@ -389,64 +391,56 @@ export function ResourcePool({
                 )}
 
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    {editingNameId === r.id ? (
-                      <input
-                        data-row-action
-                        type="text"
-                        autoFocus
-                        value={draftName}
-                        onChange={(e) => setDraftName(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        onBlur={() => void commitRename(r)}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === "Enter") void commitRename(r);
-                          if (e.key === "Escape") setEditingNameId(null);
-                        }}
-                        className="flex-1 rounded-md bg-[var(--color-surface-2)] px-2 py-0.5 text-xs outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
-                      />
-                    ) : (
-                      <span className="truncate text-left font-medium">
-                        {r.name}
-                      </span>
-                    )}
-                    <span className="shrink-0 text-[10px] text-[var(--color-muted)]">
-                      {r.imageCount} images
-                    </span>
-                  </div>
-
-                  <div className="mt-1.5 flex items-center gap-3 text-[10px] text-[var(--color-muted)]">
-                    <span>{new Date(r.createdAt).toLocaleString()}</span>
-                    {r.type === "video" && r.duration != null && (
-                      <span className="tabular-nums">
-                        {formatDuration(r.duration)}
-                        {r.width && r.height ? ` · ${r.width}×${r.height}` : ""}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {r.type === "video" && (
-                    <Link
+                  {editingNameId === r.id ? (
+                    <input
                       data-row-action
-                      href={`/projects/${projectId}/extract/${r.id}`}
+                      type="text"
+                      autoFocus
+                      value={draftName}
+                      onChange={(e) => setDraftName(e.target.value)}
                       onClick={(e) => e.stopPropagation()}
-                      className="rounded-md border border-[var(--color-accent)]/60 bg-[var(--color-accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--color-accent)] hover:border-[var(--color-accent)]"
-                    >
-                      Frame Extraction →
-                    </Link>
+                      onBlur={() => void commitRename(r)}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === "Enter") void commitRename(r);
+                        if (e.key === "Escape") setEditingNameId(null);
+                      }}
+                      className="w-full rounded-md bg-[var(--color-surface-2)] px-2 py-0.5 text-xs outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                    />
+                  ) : (
+                    <div className="truncate text-left font-medium leading-tight">
+                      {r.name}
+                    </div>
                   )}
-                  <RowMenu
-                    open={openMenuId === r.id}
-                    onToggle={() =>
-                      setOpenMenuId((cur) => (cur === r.id ? null : r.id))
-                    }
-                    onRename={() => startRename(r)}
-                    onDelete={() => void onDelete(r)}
-                  />
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[10px] text-[var(--color-muted)]">
+                    <span>{r.imageCount} images</span>
+                    {r.type === "video" && r.duration != null && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="tabular-nums">
+                          {formatDuration(r.duration)}
+                        </span>
+                      </>
+                    )}
+                    {r.type === "video" && r.width && r.height && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="tabular-nums">
+                          {r.width}×{r.height}
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </div>
+
+                <RowMenu
+                  open={openMenuId === r.id}
+                  onToggle={() =>
+                    setOpenMenuId((cur) => (cur === r.id ? null : r.id))
+                  }
+                  onRename={() => startRename(r)}
+                  onDelete={() => void onDelete(r)}
+                />
               </li>
             );
           })}
